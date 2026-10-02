@@ -31,7 +31,9 @@ export JAVA_HOME
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 endif
 
-export SPARK_LOCAL_IP ?= 127.0.0.1   # quiets "hostname resolves to a loopback address" on laptops
+# Quiets "hostname resolves to a loopback address" on laptops. (Comment on its own line: make keeps the
+# whitespace before an inline # as part of the value.)
+export SPARK_LOCAL_IP ?= 127.0.0.1
 
 .PHONY: setup land bronze verify show check-secrets hooks test clean java-check
 
