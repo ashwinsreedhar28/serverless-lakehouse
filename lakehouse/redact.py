@@ -1,0 +1,48 @@
+"""Credential redaction. Used twice: by `land` when copying source bytes, and by
+scripts/check_secrets.py before every commit. One pattern list, so the two can't drift.
+
+Each pattern names what it catches; the replacement is `<redacted:NAME>` so a reader of the
+landed file can see that something was removed and what kind of thing it was.
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from typing import Pattern
+
+# (name, compiled regex, replacement-template). Templates may reference groups of the match.
+PATTERNS: list[tuple[str, Pattern[str], str]] = [
+    ("hf_token",      re.compile(r"hf_[A-Za-z0-9]{20,}"),                       "<redacted:hf_token>"),
+    ("runpod_key",    re.compile(r"rpa_[A-Za-z0-9]{20,}"),                      "<redacted:runpod_key>"),
+    # covers OpenAI sk-..., OpenRouter sk-or-v1-..., Anthropic sk-ant-...
+    ("sk_key",        re.compile(r"sk-[A-Za-z0-9_\-]{20,}"),                    "<redacted:sk_key>"),
+    ("github_token",  re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),                "<redacted:github_token>"),
+    ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}"),                         "<redacted:aws_access_key>"),
+    ("bearer",        re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}"),       "Bearer <redacted:bearer>"),
+    # key=value and "key": "value" forms where the key says it is a secret. Keeps the key, quotes and
+    # separator, drops the value. The value class excludes '<' so already-redacted values don't re-match.
+    ("kv_secret",
+     re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd|authorization)\b(['\"]?\s*[:=]\s*['\"]?)([A-Za-z0-9._\-]{16,})"),
+     r"\1\2<redacted:kv_secret>"),
+]
+
+
+def redact(text: str) -> tuple[str, Counter]:
+    """Return (redacted_text, Counter{pattern_name: hits})."""
+    hits: Counter = Counter()
+    for name, rx, repl in PATTERNS:
+        text, n = rx.subn(repl, text)
+        if n:
+            hits[name] += n
+    return text, hits
+
+
+def find(text: str) -> list[tuple[str, str]]:
+    """Return [(pattern_name, masked_match)] without modifying anything. For the pre-commit scan."""
+    out = []
+    for name, rx, _ in PATTERNS:
+        for m in rx.finditer(text):
+            s = m.group(0)
+            out.append((name, s[:6] + "…" + s[-3:] if len(s) > 12 else s[:3] + "…"))
+    return out
