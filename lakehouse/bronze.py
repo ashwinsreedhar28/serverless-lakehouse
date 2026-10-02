@@ -17,6 +17,11 @@ What bronze does
   alongside the old rows. Two identical files at different paths are both ingested — the source really
   does contain both (results_v0.csv and bench/logs/results_runs1-3.csv are byte-identical); silver dedupes.
   --force disables the skip.
+- The ledger (`bronze_ingest_log`) is reconciled at the end of every run: any (table, file, sha) present in a
+  data table but missing from the log — a run that died between the data append and the log append — gets a
+  log row marked `reconciled`, so a retry repairs the bookkeeping instead of reporting "nothing new".
+- Which version of a file is *current* is not bronze's call: the landing manifest is the snapshot, and silver
+  selects rows by the manifest's (path, sha256) pairs. Bronze only guarantees every version ever landed is here.
 
 What bronze does not do (silver's job)
 - Parse the three worker-log timestamp formats, explode the JSON strings, type the CSV columns,
@@ -80,7 +85,23 @@ SCHEMA_WORKER_LOG_LINES = StructType([_s("line_no", IntegerType(), False), _s("r
 SCHEMA_INGEST_LOG = StructType([
     _s("run_label", StringType(), False), _s("table", StringType(), False), _s("source_file", StringType(), False),
     _s("source_sha256", StringType(), False), _s("rows", LongType(), False), _s("ingested_at", TimestampType(), False),
+    _s("reconciled", BooleanType(), False),
 ])
+
+# Known header rows of the Pulse CSVs. Bronze derives schemas from the files it reads; these lists exist only so a
+# silver build over a landing zone that lacks a dataset can still create an empty table with the right columns.
+CSV_COLUMNS = {
+    "bronze_pulse_coldstart_requests": ["ts_utc", "endpoint_id", "gpu", "model", "kind", "cycle", "req", "wall_ms", "delay_ms", "exec_ms",
+                                        "status", "prompt_tokens", "completion_tokens", "finish_reason", "text", "workers_before", "error"],
+    "bronze_pulse_throughput_requests": ["ts_utc", "endpoint_id", "gpu", "model", "label", "n", "concurrency", "req", "wall_ms", "delay_ms",
+                                         "exec_ms", "status", "prompt_tokens", "completion_tokens", "finish_reason", "score", "error"],
+    "bronze_pulse_quality_requests": ["ts_utc", "backend", "model", "label", "host", "gpu", "batch_id", "concurrency", "article_id", "domain",
+                                      "wall_ms", "prompt_tokens", "completion_tokens", "finish_reason", "score", "reason", "parse_ok", "text",
+                                      "error", "price_unit", "rate_in", "rate_out", "rate_hr", "rate_source", "est_cost_usd", "fixture_sha", "extra"],
+    "bronze_pulse_quality_batches": ["batch_id", "ts_utc", "backend", "model", "label", "host", "gpu", "worker_id", "concurrency", "n", "ok",
+                                     "parse_ok", "wall_ms", "served_model", "workers_before", "price_unit", "rate_in", "rate_out", "rate_hr",
+                                     "rate_source", "est_cost_usd", "fixture_sha", "note"],
+}
 
 # landing dataset tag (from manifest) → bronze table(s) fed by it
 CSV_TABLE_BY_DATASET = {
@@ -182,6 +203,21 @@ def load_table(spark: SparkSession, fmt: str, name: str) -> DataFrame | None:
     return spark.read.format(fmt).load(str(table_path(name)))
 
 
+def empty_schema(name: str) -> StructType:
+    base = {
+        "bronze_coldstart_series": SCHEMA_COLDSTART_SERIES, "bronze_coldstart_runs": SCHEMA_COLDSTART_RUNS,
+        "bronze_sweep_runs": SCHEMA_SWEEP_RUNS, "bronze_sweep_records": SCHEMA_SWEEP_RECORDS,
+        "bronze_worker_log_lines": SCHEMA_WORKER_LOG_LINES,
+    }.get(name) or StructType([_s(c) for c in CSV_COLUMNS[name]])
+    return StructType(list(base.fields) + LINEAGE_FIELDS)
+
+
+def load_or_empty(spark: SparkSession, fmt: str, name: str) -> DataFrame:
+    """The bronze table, or an empty frame with its schema when no landed file has fed it yet."""
+    df = load_table(spark, fmt, name)
+    return df if df is not None else spark.createDataFrame([], empty_schema(name))
+
+
 def ingested_keys(spark: SparkSession, fmt: str, name: str) -> set[tuple[str, str]]:
     """(source_file, source_sha256) pairs already in the table — the idempotency key."""
     df = load_table(spark, fmt, name)
@@ -208,6 +244,34 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def read_manifest(landing: Path) -> dict:
+    manifest_path = landing / MANIFEST_PATH.name
+    if not manifest_path.is_file():
+        raise SystemExit(f"no manifest at {manifest_path}; run `make land` first")
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def reconcile_ingest_log(spark: SparkSession, fmt: str, run_label: str, ingested_at: datetime) -> int:
+    """Append log rows for (table, file, sha) triples that exist in a data table but not in the ledger."""
+    log = load_table(spark, fmt, "bronze_ingest_log")
+    logged: set[tuple[str, str, str]] = set()
+    if log is not None:
+        logged = {(r[0], r[1], r[2]) for r in log.select("table", "source_file", "source_sha256").distinct().collect()}
+    missing: list[tuple] = []
+    for table in BRONZE_TABLES:
+        if table == "bronze_ingest_log":
+            continue
+        df = load_table(spark, fmt, table)
+        if df is None:
+            continue
+        for r in df.groupBy("source_file", "source_sha256").agg(F.count("*").alias("n"), F.min("ingested_at").alias("t")).collect():
+            if (table, r["source_file"], r["source_sha256"]) not in logged:
+                missing.append((run_label, table, r["source_file"], r["source_sha256"], r["n"], r["t"] or ingested_at, True))
+    if missing:
+        append(spark.createDataFrame(missing, SCHEMA_INGEST_LOG), fmt, "bronze_ingest_log")
+    return len(missing)
+
+
 # --------------------------------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------------------------------
@@ -221,11 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     landing: Path = args.landing_dir
-    manifest_path = landing / MANIFEST_PATH.name
-    if not manifest_path.is_file():
-        print(f"bronze: no manifest at {manifest_path}; run `make land` first", file=sys.stderr)
-        return 2
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = read_manifest(landing)
 
     spark = get_spark(args.format, app="bronze-ingest")
     ingested_at = datetime.now(timezone.utc).replace(microsecond=0)
@@ -251,10 +311,12 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             df = with_lineage(df, ingested_at, args.run_label, rel, sha)
             staged.setdefault(table, []).append(df)
-            log_rows.append((args.run_label, table, rel, sha, df.count(), ingested_at))
+            log_rows.append((args.run_label, table, rel, sha, df.count(), ingested_at, False))
 
     if not staged:
-        print(f"bronze: nothing new to ingest ({skipped} file→table pairs already present); use --force to re-append")
+        fixed = reconcile_ingest_log(spark, args.format, args.run_label, ingested_at)
+        print(f"bronze: nothing new to ingest ({skipped} file→table pairs already present); use --force to re-append"
+              + (f"; repaired {fixed} missing ingest-log rows" if fixed else ""))
         spark.stop()
         return 0
 
@@ -270,6 +332,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {table:<34} +{n:>6} rows  from {len(staged[table])} file(s)")
     append(spark.createDataFrame(log_rows, SCHEMA_INGEST_LOG), args.format, "bronze_ingest_log")
     print(f"  {'bronze_ingest_log':<34} +{len(log_rows):>6} rows")
+    fixed = reconcile_ingest_log(spark, args.format, args.run_label, ingested_at)
+    if fixed:
+        print(f"  repaired {fixed} ingest-log rows missing from an earlier interrupted run")
     if skipped:
         print(f"  skipped {skipped} file→table pairs already ingested (same path and sha256)")
     spark.stop()

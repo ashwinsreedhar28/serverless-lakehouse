@@ -1,8 +1,8 @@
-series_label,run_index,host_state,note,source
-vllm_qwen3_8b_4090_flashboot_on,0,fresh_host,"first boot of the night on endpoint rvy2p7bfia91fm (210 s); not one of the samples in the Sep 30 write-up",Ashwin 2026-10-02
-vllm_qwen3_8b_4090_flashboot_on,1,warm_host,"same-night rerun (154.3 s); one of the two samples behind the Sep 30 write-up's 147.5 s",Ashwin 2026-10-02
-vllm_qwen3_8b_4090_flashboot_on,2,flashboot_resume,"532 ms FlashBoot resume",file note
-vllm_qwen3_8b_4090_flashboot_off_b,0,warm_host,"same-night rerun with FlashBoot off (140.7 s); the other sample behind the 147.5 s",Ashwin 2026-10-02
-pagedserve_qwen3_8b_4090_fresh_host,0,fresh_host,"first job to a brand-new endpoint; includes the 27 GB image pull",file image field
-pagedserve_slim_qwen3_8b_4090_fresh_host,0,fresh_host,"fresh host; includes the image pull",file label
-pagedserve_slim_qwen3_8b_4090_first_after_rollout,0,partial_host,"host already had most image layers from a failed earlier attempt",file note
+series_label,run_index,host_state,evidence,note,source
+vllm_qwen3_8b_4090_flashboot_on,0,fresh_host,author testimony,first boot of the night on endpoint rvy2p7bfia91fm (210 s); not one of the samples in the Sep 30 write-up,Ashwin 2026-10-02
+vllm_qwen3_8b_4090_flashboot_on,1,warm_host,author testimony,same-night rerun (154.3 s); one of the two samples behind the Sep 30 write-up's 147.5 s,Ashwin 2026-10-02
+vllm_qwen3_8b_4090_flashboot_on,2,flashboot_resume,file note (observed),532 ms FlashBoot resume,file note
+vllm_qwen3_8b_4090_flashboot_off_b,0,warm_host,author testimony,same-night rerun with FlashBoot off (140.7 s); the other sample behind the 147.5 s,Ashwin 2026-10-02
+pagedserve_qwen3_8b_4090_fresh_host,0,fresh_host,author label at run time,first job to a brand-new endpoint; includes the 27 GB image pull,file image field
+pagedserve_slim_qwen3_8b_4090_fresh_host,0,fresh_host,author label at run time,fresh host; includes the image pull,file label
+pagedserve_slim_qwen3_8b_4090_first_after_rollout,0,partial_host,file note (observed),host already had most image layers from a failed earlier attempt,file note

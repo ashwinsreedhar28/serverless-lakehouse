@@ -4,8 +4,10 @@
 
 What silver does
 - Reads bronze (never landing) and the committed seeds in seeds/.
-- Takes, per source file, only the rows from its latest bronze ingest (bronze is a ledger and may hold
-  several versions of a file; silver wants the current one).
+- Selects, per source file, the rows of the version the landing manifest names right now — the
+  (path, sha256) pairs in data/landing/manifest.json. Bronze is a ledger and may hold several versions of a
+  file, including a renamed path or a version with no records; the manifest is the snapshot that says which
+  one is current. A manifest file whose version is missing from bronze stops the build (run `make bronze`).
 - Types every column, explodes the JSON strings bronze kept, parses the three worker-log timestamp formats
   to UTC, normalises names that differ between sources (`qwen/qwen3-8b` and `Qwen3-8B` are one model),
   and dedupes the byte-identical Pulse CSVs.
@@ -27,24 +29,53 @@ from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-from .bronze import load_table
-from .config import CONSOLE_LOG_TZ, FLASHBOOT_HIT_MS, SEEDS_DIR, SILVER_TABLES, table_path
+from .bronze import load_or_empty, load_table, read_manifest
+from .config import BRONZE_TABLES, CONSOLE_LOG_TZ, FLASHBOOT_HIT_MS, LANDING_DIR, SEEDS_DIR, SILVER_TABLES, table_path
 from .spark import get_spark
 
 # --------------------------------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------------------------------
 
+_SNAPSHOT: DataFrame | None = None
+
+
+def set_snapshot(spark: SparkSession, manifest: dict) -> None:
+    """The current (source_file, source_sha256) pairs, from the landing manifest."""
+    global _SNAPSHOT
+    pairs = [(e["landed_relpath"], e["sha256_landed"]) for e in manifest["files"]]
+    _SNAPSHOT = spark.createDataFrame(pairs, "source_file string, source_sha256 string").cache()
+
+
 def latest_per_file(df: DataFrame) -> DataFrame:
-    """Keep only the rows of each source_file's most recent bronze ingest."""
-    latest = df.groupBy("source_file").agg(F.max("ingested_at").alias("_latest"))
-    return (df.join(latest, "source_file")
-              .where(F.col("ingested_at") == F.col("_latest"))
-              .drop("_latest"))
+    """Keep only the rows whose (source_file, source_sha256) the landing manifest names as current.
+
+    Named for what it used to do (max ingested_at per file); that broke on a reverted file (A→B→A re-appends
+    nothing, so B stayed newest), on a replacement with no records, and on a rename. Joining to the manifest
+    handles all three and never depends on ingest timestamps.
+    """
+    assert _SNAPSHOT is not None, "set_snapshot() must run before any silver builder"
+    return df.join(_SNAPSHOT, ["source_file", "source_sha256"], "inner")
+
+
+def assert_snapshot_in_bronze(spark: SparkSession, fmt: str, manifest: dict) -> None:
+    """Every manifest (file, sha) must exist in at least one bronze data table, or silver would silently drop it."""
+    present: set[tuple[str, str]] = set()
+    for t in BRONZE_TABLES:
+        if t == "bronze_ingest_log":
+            continue
+        df = load_table(spark, fmt, t)
+        if df is not None:
+            present |= {(r[0], r[1]) for r in df.select("source_file", "source_sha256").distinct().collect()}
+    missing = [e["landed_relpath"] for e in manifest["files"] if (e["landed_relpath"], e["sha256_landed"]) not in present]
+    if missing:
+        raise SystemExit(f"silver: {len(missing)} landed file(s) are not in bronze at their current sha256 — run `make bronze` first: "
+                         + ", ".join(missing[:5]) + (" …" if len(missing) > 5 else ""))
 
 
 def read_seed(spark: SparkSession, name: str, schema: T.StructType) -> DataFrame:
     return (spark.read.schema(schema).option("header", "true").option("quote", '"').option("escape", '"')
+            .option("nullValue", "").option("emptyValue", None)
             .csv(str(SEEDS_DIR / f"{name}.csv")))
 
 
@@ -82,12 +113,13 @@ SEED_SERIES = T.StructType([
 ])
 SEED_RUN_NOTES = T.StructType([
     T.StructField("series_label", T.StringType()), T.StructField("run_index", T.IntegerType()),
-    T.StructField("host_state", T.StringType()), T.StructField("note", T.StringType()), T.StructField("source", T.StringType()),
+    T.StructField("host_state", T.StringType()), T.StructField("evidence", T.StringType()),
+    T.StructField("note", T.StringType()), T.StructField("source", T.StringType()),
 ])
 SEED_GPU = T.StructType([
     T.StructField("gpu_label", T.StringType()), T.StructField("tier", T.StringType()),
     T.StructField("gpu_model", T.StringType()), T.StructField("price_per_hr_usd", T.DoubleType()),
-    T.StructField("price_source", T.StringType()), T.StructField("notes", T.StringType()),
+    T.StructField("evidence", T.StringType()), T.StructField("source", T.StringType()), T.StructField("notes", T.StringType()),
 ])
 
 
@@ -120,13 +152,13 @@ REQUEST_COLUMNS = [
     "source", "engine", "engine_build", "series_label", "endpoint_id", "run_index", "request_index", "kind",
     "request_ts_utc", "model", "gpu_label", "gpu_model", "gpu_tier", "price_per_hr_usd", "flashboot",
     "weights_mode", "http_status", "job_status", "ok", "wall_ms", "delay_ms", "exec_ms", "worker_id",
-    "prompt_tokens", "completion_tokens", "is_flashboot_hit", "billed_s", "est_cost_usd",
-    "host_state", "run_note", "workers_before_json", "error", "source_file", "bronze_run_label",
+    "prompt_tokens", "completion_tokens", "is_flashboot_hit", "request_duration_s", "est_cost_usd",
+    "host_state", "run_note", "workers_before_json", "error", "source_file", "source_sha256", "bronze_run_label",
 ]
 
 
 def emberserve_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) -> DataFrame:
-    runs = latest_per_file(load_table(spark, fmt, "bronze_coldstart_runs"))
+    runs = latest_per_file(load_or_empty(spark, fmt, "bronze_coldstart_runs"))
     pairs = F.array(
         F.struct(F.lit("cold").alias("kind"), F.col("cold_json").alias("js")),
         F.struct(F.lit("warm").alias("kind"), F.col("warm_json").alias("js")),
@@ -168,13 +200,13 @@ def emberserve_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame
                  F.coalesce(F.col("_hs"), F.lit("unknown")).alias("host_state"), "run_note",
                  F.col("health_before_json").alias("workers_before_json"),
                  F.col("j.error").alias("error"),
-                 "source_file", F.col("run_label").alias("bronze_run_label"),
+                 "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label"),
              ))
     return out
 
 
 def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) -> DataFrame:
-    b = latest_per_file(load_table(spark, fmt, "bronze_pulse_coldstart_requests"))
+    b = latest_per_file(load_or_empty(spark, fmt, "bronze_pulse_coldstart_requests"))
     # three files; results_v0.csv and bench/logs/results_runs1-3.csv are byte-identical copies of runs 1-3
     prio = F.when(F.col("source_file") == "pulse/results.csv", 0).otherwise(1)
     key = ["ts_utc", "endpoint_id", "kind", "cycle", "req", "delay_ms", "exec_ms"]
@@ -208,7 +240,7 @@ def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) ->
                 F.lit("unknown").alias("host_state"), F.lit(None).cast("string").alias("run_note"),
                 F.when(F.col("workers_before") != "", F.col("workers_before")).alias("workers_before_json"),
                 F.when(F.col("error") != "", F.col("error")).alias("error"),
-                "source_file", F.col("run_label").alias("bronze_run_label"),
+                "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label"),
             ))
     return out
 
@@ -217,30 +249,32 @@ def build_coldstart_requests(spark: SparkSession, fmt: str, dims: dict[str, Data
     e = emberserve_requests(spark, fmt, dims)
     p = pulse_requests(spark, fmt, dims)
     df = e.unionByName(p)
-    billed_s = (F.coalesce(F.col("delay_ms"), F.lit(0)) + F.coalesce(F.col("exec_ms"), F.lit(0))) / 1000.0
+    # request_duration_s is a cost *proxy*, not billed time: Runpod bills worker start, execution and idle
+    # phases per worker, which a per-request sum neither bounds from above nor below.
+    duration_s = (F.coalesce(F.col("delay_ms"), F.lit(0)) + F.coalesce(F.col("exec_ms"), F.lit(0))) / 1000.0
     return (df.withColumn("is_flashboot_hit",
                           F.when(F.col("kind") == "cold",
                                  F.col("ok") & (F.col("delay_ms") < FLASHBOOT_HIT_MS)))
-              .withColumn("billed_s", F.when(F.col("ok"), billed_s))
-              .withColumn("est_cost_usd", F.col("billed_s") / 3600.0 * F.col("price_per_hr_usd"))
+              .withColumn("request_duration_s", F.when(F.col("ok"), duration_s))
+              .withColumn("est_cost_usd", F.col("request_duration_s") / 3600.0 * F.col("price_per_hr_usd"))
               .select(*REQUEST_COLUMNS))
 
 
 def build_coldstart_phases(spark: SparkSession, fmt: str) -> DataFrame:
-    runs = latest_per_file(load_table(spark, fmt, "bronze_coldstart_runs"))
+    runs = latest_per_file(load_or_empty(spark, fmt, "bronze_coldstart_runs"))
     j = runs.withColumn("j", F.from_json("cold_json", REQUEST_JSON))
     phases = (j.where(F.col("j.phases_s").isNotNull())
                .select(F.col("label").alias("series_label"), F.col("endpoint").alias("endpoint_id"),
                        F.col("run_index").cast("int"), F.col("j.worker_id").alias("worker_id"),
                        F.lit("phase").alias("kind"),
                        F.explode("j.phases_s").alias("name", "value"),
-                       "source_file"))
+                       "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label")))
     marks = (j.where(F.col("j.timeline.marks").isNotNull())
               .select(F.col("label").alias("series_label"), F.col("endpoint").alias("endpoint_id"),
                       F.col("run_index").cast("int"), F.col("j.worker_id").alias("worker_id"),
                       F.lit("mark").alias("kind"),
                       F.explode("j.timeline.marks").alias("name", "value"),
-                      "source_file"))
+                      "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label")))
     return (phases.unionByName(marks)
                   .withColumn("seconds", F.when(F.col("kind") == "phase", F.col("value")))
                   .withColumn("mark_ts_utc", F.when(F.col("kind") == "mark", F.to_timestamp(F.col("value"))))
@@ -276,19 +310,22 @@ SERVER_LAT = T.StructType([T.StructField(k, T.DoubleType()) for k in ("ttft_ms_m
 
 
 def endpoint_from_url(col):
-    return F.coalesce(F.regexp_extract(col, r"/v2/([a-z0-9]+)/", 1),
-                      F.regexp_extract(col, r"https://([a-z0-9]+)\.api\.runpod\.ai", 1))
+    """regexp_extract returns "" (not null) on no match, so each candidate is nulled before coalesce."""
+    def nz(c):
+        return F.when(c != "", c)
+    return F.coalesce(nz(F.regexp_extract(col, r"/v2/([a-z0-9]+)(?:/|$)", 1)),
+                      nz(F.regexp_extract(col, r"https://([a-z0-9]+)\.api\.runpod\.ai", 1)))
 
 
 def build_sweep_summaries(spark: SparkSession, fmt: str) -> DataFrame:
-    b = latest_per_file(load_table(spark, fmt, "bronze_sweep_runs"))
+    b = latest_per_file(load_or_empty(spark, fmt, "bronze_sweep_runs"))
     s = (b.withColumn("s", F.from_json("summary_json", SUMMARY))
           .withColumn("t", F.from_json("trace_json", TRACE))
           .withColumn("a", F.from_json("args_json", ARGS))
           .withColumn("sl", F.from_json("server_latency_json", SERVER_LAT)))
     cols = [
         "system", F.col("model").alias("served_model"),
-        F.when(endpoint_from_url(F.col("base_url")) != "", endpoint_from_url(F.col("base_url"))).alias("endpoint_id"),
+        endpoint_from_url(F.col("base_url")).alias("endpoint_id"),
         F.when(F.col("base_url").contains("/v2/"), "queue").otherwise("load_balancer").alias("endpoint_mode"),
         F.col("run_index").cast("int"),
         # null request_rate is the unbounded ("inf") run: every request sent at t=0
@@ -309,13 +346,13 @@ def build_sweep_summaries(spark: SparkSession, fmt: str) -> DataFrame:
         F.col("t.output_mean").alias("trace_output_mean"), F.col("t.source").alias("trace_source"),
         F.col("sl.ttft_ms_mean").alias("server_ttft_ms_mean"), F.col("sl.tpot_ms_mean").alias("server_tpot_ms_mean"),
         F.col("sl.e2e_ms_mean").alias("server_e2e_ms_mean"),
-        "n_records", "source_file", F.col("run_label").alias("bronze_run_label"),
+        "n_records", "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label"),
     ]
     return s.select(*cols)
 
 
 def build_sweep_requests(spark: SparkSession, fmt: str) -> DataFrame:
-    b = latest_per_file(load_table(spark, fmt, "bronze_sweep_records"))
+    b = latest_per_file(load_or_empty(spark, fmt, "bronze_sweep_records"))
     w = Window.partitionBy("source_file", "run_index")
     return (b.withColumn("request_rate", F.coalesce(F.col("request_rate"), F.lit(float("inf"))))
              .withColumn("arrival_offset_s", F.col("arrival_s") - F.min("arrival_s").over(w))
@@ -325,7 +362,7 @@ def build_sweep_requests(spark: SparkSession, fmt: str) -> DataFrame:
                                            (F.col("finish_s") - F.col("first_token_s")) * 1000 / (F.col("output_tokens") - 1)))
              .select("system", F.col("run_index").cast("int"), "request_rate", "request_id", "arrival_offset_s",
                      "prompt_tokens", "output_tokens", "success", "error", "ttft_ms", "e2e_ms", "tpot_ms",
-                     "source_file", F.col("run_label").alias("bronze_run_label")))
+                     "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label")))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -341,7 +378,7 @@ SDK_JSON = T.StructType([T.StructField("requestId", T.StringType()), T.StructFie
 
 
 def build_worker_log_events(spark: SparkSession, fmt: str) -> DataFrame:
-    b = latest_per_file(load_table(spark, fmt, "bronze_worker_log_lines"))
+    b = latest_per_file(load_or_empty(spark, fmt, "bronze_worker_log_lines"))
     line = F.col("raw_line")
     fmt_col = (F.when(line.rlike(RX_CONSOLE), "console")
                 .when(line.rlike(RX_ISO), "iso")
@@ -394,7 +431,7 @@ def build_worker_log_events(spark: SparkSession, fmt: str) -> DataFrame:
                                     .when(is_sdk_json, sdk["message"])
                                     .when(F.col("event_kind") == "wrapper", wrapper_msg)
                                     .otherwise(p)))
-    return df.select("source_file", "line_no", "ts_utc", "ts_format", "worker_id", "event_kind", "process_role",
+    return df.select("source_file", "source_sha256", "line_no", "ts_utc", "ts_format", "worker_id", "event_kind", "process_role",
                      "pid", "level", "request_id", "message", "payload", F.col("run_label").alias("bronze_run_label"))
 
 
@@ -403,7 +440,7 @@ def build_worker_log_events(spark: SparkSession, fmt: str) -> DataFrame:
 # --------------------------------------------------------------------------------------------------
 
 def build_scoring_requests(spark: SparkSession, fmt: str) -> DataFrame:
-    b = latest_per_file(load_table(spark, fmt, "bronze_pulse_quality_requests"))
+    b = latest_per_file(load_or_empty(spark, fmt, "bronze_pulse_quality_requests"))
     nz = lambda c: F.when(F.col(c) != "", F.col(c))   # Pulse writes empty strings for missing values
     return b.select(
         F.to_timestamp("ts_utc").alias("request_ts_utc"), "backend", canonical_model(F.col("model")).alias("model"),
@@ -415,12 +452,12 @@ def build_scoring_requests(spark: SparkSession, fmt: str) -> DataFrame:
         "price_unit", nz("rate_in").cast("double").alias("rate_in_usd_per_m"),
         nz("rate_out").cast("double").alias("rate_out_usd_per_m"), nz("rate_hr").cast("double").alias("rate_usd_per_hr"),
         "rate_source", nz("est_cost_usd").cast("double").alias("est_cost_usd"), "fixture_sha",
-        F.col("extra").alias("extra_json"), "source_file", F.col("run_label").alias("bronze_run_label"),
+        F.col("extra").alias("extra_json"), "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label"),
     )
 
 
 def build_scoring_batches(spark: SparkSession, fmt: str) -> DataFrame:
-    b = latest_per_file(load_table(spark, fmt, "bronze_pulse_quality_batches"))
+    b = latest_per_file(load_or_empty(spark, fmt, "bronze_pulse_quality_batches"))
     nz = lambda c: F.when(F.col(c) != "", F.col(c))
     return b.select(
         "batch_id", F.to_timestamp("ts_utc").alias("batch_ts_utc"), "backend",
@@ -432,7 +469,7 @@ def build_scoring_batches(spark: SparkSession, fmt: str) -> DataFrame:
         nz("rate_in").cast("double").alias("rate_in_usd_per_m"), nz("rate_out").cast("double").alias("rate_out_usd_per_m"),
         nz("rate_hr").cast("double").alias("rate_usd_per_hr"), "rate_source",
         nz("est_cost_usd").cast("double").alias("est_cost_usd"), "fixture_sha", nz("note").alias("note"),
-        "source_file", F.col("run_label").alias("bronze_run_label"),
+        "source_file", "source_sha256", F.col("run_label").alias("bronze_run_label"),
     )
 
 
@@ -445,6 +482,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--format", default="delta", choices=["delta", "parquet"])
     args = ap.parse_args(argv)
     spark = get_spark(args.format, app="silver-build")
+    manifest = read_manifest(LANDING_DIR)
+    set_snapshot(spark, manifest)
+    assert_snapshot_in_bronze(spark, args.format, manifest)
 
     dims = build_dims(spark)
     builders = {

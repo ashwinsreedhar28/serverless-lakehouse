@@ -215,12 +215,12 @@ with c1:
                                 "n_warm": st.column_config.NumberColumn("warm n"),
                                 "warm_exec_ms_p50": st.column_config.NumberColumn("warm exec p50 (ms)", format="%d")})
 with c2:
-    st.subheader("FlashBoot hit rate")
-    st.caption(f"Share of cold-labelled requests answered in under {THR_S:.0f} s, per endpoint and setting. It cannot tell a "
-               "FlashBoot resume from a worker that was still warm, so it is named for what it measures.")
+    st.subheader("Fast cold responses (FlashBoot proxy)")
+    st.caption(f"Share of *successful* cold-labelled requests answered in under {THR_S:.0f} s, per endpoint and setting. The data "
+               "cannot tell a FlashBoot resume from a worker that was still warm, so this is a proxy, named for what it measures.")
     st.dataframe(FB[["engine", "model", "endpoint_id", "flashboot_setting", "n_cold", "n_hits", "hit_rate", "hit_delay_ms_p50", "miss_delay_ms_p50"]],
                  hide_index=True, use_container_width=True,
-                 column_config={"hit_rate": st.column_config.ProgressColumn("hit rate", min_value=0, max_value=1, format="%.0f%%"),
+                 column_config={"hit_rate": st.column_config.ProgressColumn("fast-response rate", min_value=0, max_value=1, format="percent"),
                                 "flashboot_setting": "setting", "n_cold": "cold", "n_hits": "hits",
                                 "hit_delay_ms_p50": st.column_config.NumberColumn("hit p50 (ms)", format="%d"),
                                 "miss_delay_ms_p50": st.column_config.NumberColumn("miss p50 (ms)", format="%d")})
@@ -233,8 +233,9 @@ st.divider()
 
 c3, c4 = st.columns(2)
 with c3:
-    st.subheader("$ per cold start")
-    st.caption("Median of (delay + exec) × $/hr, Qwen3-8B on an RTX 4090 at $1.10/hr, pooled. An upper bound: queue time before a worker exists is included.")
+    st.subheader("$ per cold start (request-duration proxy)")
+    st.caption("Median of (delay + exec) × $/hr, Qwen3-8B on an RTX 4090 at $1.10/hr, pooled. A comparison metric, not billed time: "
+               "Runpod bills worker start, execution and idle per worker, which a per-request sum neither bounds above nor below.")
     cc = ENG[(ENG.scope == "pooled") & ENG.cold_est_cost_usd_p50.notna()].copy()
     cc["label"] = cc.engine + " · " + cc.weights_mode
     ch = alt.Chart(cc).mark_bar(cornerRadius=3).encode(
@@ -272,8 +273,9 @@ st.divider()
 # --------------------------------------------------------------------------------------------------
 
 st.subheader("Time to first token under load")
-st.caption("Median TTFT per request rate for each emberserve Serverless sweep. ∞ means all 200 requests were sent at once. "
-           "Queue endpoints add a hop and a worker pool; the load-balancer endpoint talks to the server directly.")
+st.caption("Median TTFT per request rate for each emberserve Serverless sweep. ∞ = unpaced: all 200 requests queued at t=0, capped by "
+           "max_concurrency where the run set one (hover a point). Systems differ in model size — `7b_…` is Qwen2.5-7B, `emberserve`/`emberserve_v2` "
+           "ran on the Qwen2.5-0.5B endpoint — and in endpoint mode: queue endpoints add a hop and a worker pool, the load balancer talks to the server directly.")
 sw = SW[SW.ttft_ms_p50.notna() & (SW.completed > 0)].copy()
 sw["rate"] = sw.request_rate.map(lambda r: "∞" if r == "inf" else f"{float(r):g}")
 sw = sw.drop(columns=["request_rate"])   # mixed float/"inf" column cannot be serialised to Arrow for the chart
@@ -297,6 +299,7 @@ with st.expander("Table view"):
                       "ttft_ms_p50", "ttft_ms_p99", "e2e_ms_p50", "e2e_ms_p99"]], hide_index=True, use_container_width=True)
 
 st.divider()
-st.caption(f"Method, schemas and the seventeen design decisions: [README]({REPO}#readme). The same gold tables as markdown: "
-           f"[docs/gold_report.md]({REPO}/blob/main/docs/gold_report.md). Costs are estimates with the formula stated; FlashBoot hits "
-           "are defined by a threshold, not by Runpod's own accounting.")
+st.caption(f"Method, schemas and the design decisions: [README]({REPO}#readme). The same gold tables as markdown: "
+           f"[docs/gold_report.md]({REPO}/blob/main/docs/gold_report.md). Medians are Spark `percentile_approx` (an observed value, no "
+           "interpolation). Costs are a request-duration proxy with the formula stated; fast cold responses are a threshold proxy for FlashBoot, "
+           "not Runpod's own accounting; cohorts are observational, not a controlled experiment.")

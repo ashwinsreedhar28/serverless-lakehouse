@@ -104,7 +104,7 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
 
 <section class="card" id="c-boot">
   <header><div><h2>Where worker-vllm's boot seconds go</h2>
-  <p class="q">From vLLM's own log lines: weights downloaded and loaded, <code>torch.compile</code>, CUDA-graph capture, the rest of engine init, then the API server coming up. One bar per boot, sorted by total. Two boots hit a warm compile cache.</p></div>
+  <p class="q">From vLLM's own log lines: weights downloaded and loaded, <code>torch.compile</code>, CUDA-graph capture, the rest of engine init, then the API server coming up. One bar per boot, sorted by total. Two boots hit a warm compile cache. The 75–81 s graph captures are the two Sep 23 boots on an unidentified 24 GB-tier GPU; the capture mode (FULL + PIECEWISE) is the same across boots.</p></div>
   <span class="src">gold_worker_boot_phases</span></header>
   <div class="legend" id="lg-boot"></div>
   <div class="chart" id="ch-boot"></div>
@@ -119,8 +119,8 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
   <div class="tblwrap" id="tb-engine"></div>
 </section>
 <section class="card" id="c-fb">
-  <header><div><h2>FlashBoot hit rate</h2>
-  <p class="q">Share of cold-labelled requests answered under the threshold, per endpoint and setting.</p></div>
+  <header><div><h2>Fast cold responses (FlashBoot proxy)</h2>
+  <p class="q">Share of <em>successful</em> cold-labelled requests answered under the threshold, per endpoint and setting. The data cannot tell a FlashBoot resume from a worker that was still warm.</p></div>
   <span class="src">gold_flashboot_hit_rate</span></header>
   <div class="tblwrap" id="tb-fb"></div>
 </section>
@@ -128,8 +128,8 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
 
 <div class="two">
 <section class="card" id="c-cost">
-  <header><div><h2>$ per cold start</h2>
-  <p class="q">Median of (delay + exec) × $/hr, Qwen3-8B on an RTX 4090 at $1.10/hr. An upper bound: queue time before a worker exists is included.</p></div>
+  <header><div><h2>$ per cold start (request-duration proxy)</h2>
+  <p class="q">Median of (delay + exec) × $/hr, Qwen3-8B on an RTX 4090 at $1.10/hr, pooled. A comparison metric, not billed time: Runpod bills worker start, execution and idle per worker.</p></div>
   <span class="src">gold_engine_comparison</span></header>
   <div class="chart" id="ch-cost"></div>
 </section>
@@ -144,7 +144,7 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
 
 <section class="card" id="c-sweep">
   <header><div><h2>Time to first token under load</h2>
-  <p class="q">Median TTFT per request rate for each emberserve Serverless sweep. <code>∞</code> means all 200 requests were sent at once. Queue endpoints add a hop and a worker pool; the load-balancer endpoint talks to the server directly.</p></div>
+  <p class="q">Median TTFT per request rate for each emberserve Serverless sweep. <code>∞</code> = unpaced: all 200 requests queued at t=0, capped by max concurrency where the run set one (hover a point). <code>7b_…</code> systems ran Qwen2.5-7B, the rest Qwen2.5-0.5B; queue endpoints add a hop and a worker pool, the load balancer talks to the server directly.</p></div>
   <span class="src">gold_sweep_latency</span></header>
   <div class="legend" id="lg-sweep"></div>
   <div class="chart" id="ch-sweep"></div>
@@ -152,7 +152,7 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
 </section>
 
 <footer>
-  <p>Built by <code>make dashboard</code> from the gold tables under <code>data/lakehouse/gold/</code>. The same tables are rendered as markdown in <code>docs/gold_report.md</code>; the method, schemas and sixteen design decisions are in the <a href="https://github.com/ashwinsreedhar28/serverless-lakehouse">README</a>. Costs are estimates with the formula stated; FlashBoot hits are defined by a threshold, not by Runpod's own accounting.</p>
+  <p>Built by <code>make dashboard</code> from the gold tables under <code>data/lakehouse/gold/</code>. The same tables are rendered as markdown in <code>docs/gold_report.md</code>; the method, schemas and design decisions are in the <a href="https://github.com/ashwinsreedhar28/serverless-lakehouse">README</a>. Medians are Spark <code>percentile_approx</code> (an observed value, no interpolation). Costs are a request-duration proxy with the formula stated; fast cold responses are a threshold proxy for FlashBoot, not Runpod's own accounting; cohorts are observational, not a controlled experiment.</p>
 </footer>
 </div>
 <div id="tip" role="tooltip"></div>
@@ -372,7 +372,7 @@ const GOLD = /*GOLD_JSON*/null;
       const pts = bySys[s].map((r) => ({ r, X: x(r.request_rate), Y: y(r.ttft_ms_p50) })).sort((a, b) => a.X - b.X);
       g += `<path class="lineplot" d="${pts.map((p, k) => (k ? "L" : "M") + p.X.toFixed(1) + " " + p.Y.toFixed(1)).join(" ")}" stroke="${SERIES[i % SERIES.length]}"/>`;
       pts.forEach((p) => {
-        const r = p.r, t = `<b>${esc(short(s))}</b> · ${esc(r.endpoint_mode)}<br>rate ${r.request_rate === "inf" ? "∞" : r.request_rate + " req/s"}${r.max_concurrency ? " · c" + r.max_concurrency : ""}<br>TTFT p50 ${fmt.s(r.ttft_ms_p50)} · p99 ${fmt.s(r.ttft_ms_p99)}<br>e2e p99 ${fmt.s(r.e2e_ms_p99)} · ${fmt.int(r.completed)} ok / ${fmt.int(r.failed)} failed · ${Math.round(r.output_tok_s)} tok/s`;
+        const r = p.r, t = `<b>${esc(short(s))}</b> · ${esc(r.endpoint_mode)} · ${esc(r.served_model || "")}<br>rate ${r.request_rate === "inf" ? "∞ (unpaced)" : r.request_rate + " req/s"}${r.max_concurrency ? " · max concurrency " + r.max_concurrency : ""}<br>TTFT p50 ${fmt.s(r.ttft_ms_p50)} · p99 ${fmt.s(r.ttft_ms_p99)}<br>e2e p99 ${fmt.s(r.e2e_ms_p99)} · ${fmt.int(r.completed)} ok / ${fmt.int(r.failed)} failed · ${Math.round(r.output_tok_s)} tok/s`;
         g += `<circle cx="${p.X}" cy="${p.Y}" r="4" fill="${SERIES[i % SERIES.length]}" stroke="var(--surface)" stroke-width="1.5"/><circle class="hot" cx="${p.X}" cy="${p.Y}" r="10" fill="transparent" data-tip="${esc(t)}"/>`;
       });
     });

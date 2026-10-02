@@ -3,9 +3,8 @@ title: serverless-lakehouse
 emoji: 🧊
 colorFrom: blue
 colorTo: gray
-sdk: streamlit
-sdk_version: 1.64.0
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: mit
 short_description: Gold-layer dashboard of a PySpark + Delta lakehouse over Runpod Serverless benchmarks

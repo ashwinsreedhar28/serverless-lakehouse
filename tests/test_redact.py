@@ -28,11 +28,29 @@ def test_already_redacted_and_benign_text_untouched():
         "revision/b968826d9c46dd6066d109eabc6255188de91218",       # HF commit hash in a URL
         "fixture_sha,7e6005269552", "worker_id=80fcxq58vdfrqt",      # ids that are not credentials
         "export RUNPOD_API_KEY=...   ENDPOINT_ID=kbme98hqtjthdl",    # runbook placeholder
+        '"tokenizer": "models/Qwen2.5-0.5B-Instruct"',               # "token" inside "tokenizer" is not a secret
+        '"max_tokens": 16, "prompt_tokens": 53404',
+        '"first_token_s": 2073169.405621416, "arrival_s": 2073168.797192291',   # numeric values are never secrets
     ]
     for s in benign:
         out, hits = redact(s)
         assert out == s and not hits, s
         assert find(s) == []
+
+
+def test_compound_key_names_and_base64_values():
+    v = "+" + "ab/CD" * 5 + "=="                              # base64-ish, starts with '+'
+    for line in (f"AWS_SECRET_ACCESS_KEY={v}", f"OPENROUTER_API_KEY: '{v}'", f'"my_token_value": "{v}"'):
+        out, hits = redact(line)
+        assert v not in out and hits["kv_secret"] == 1, line
+
+
+def test_more_token_shapes():
+    pat = "github_pat_" + "x" * 22 + "_" + "Y" * 40
+    jwt = "eyJ" + "a" * 20 + ".eyJ" + "b" * 20 + "." + "c" * 20
+    for tok, name in ((pat, "github_pat"), (jwt, "jwt"), ("ASIA" + "Q" * 16, "aws_access_key"), ("xoxb-" + "1" * 12 + "-abc", "slack_token")):
+        out, hits = redact(f"value {tok} end")
+        assert tok not in out and hits[name] == 1, name
 
 
 def test_find_masks_the_match():

@@ -1,15 +1,15 @@
-gpu_label,tier,gpu_model,price_per_hr_usd,price_source,notes
-24GB-0.69,24 GB flex,,0.69,Pulse/bench/logs/gpu_per_cycle.txt,GPU model not read off the Workers tab before the workers were gone; 21 tok/s single-stream on 8B bf16 is consistent with an L4
-24GBPRO-1.10,24 GB PRO flex,RTX 4090,1.10,Pulse/bench/logs/gpu_per_cycle.txt,RTX 4090 in US-NC-1 for the completed cycles; PRO 6000 MIG 24GB placements (US-PA-1 / US-WA-1) hung at model init and were terminated
-48GB-1.22,48 GB flex,A40,1.22,Pulse/bench/quality.csv rate_source (Runpod console 2026-09-23),
-48GB-A40-1.22,48 GB flex,A40,1.22,Pulse/bench/quality.csv rate_source (Runpod console 2026-09-23),
-RTX 4090,24 GB PRO flex,RTX 4090,1.10,Pulse/bench/logs/gpu_per_cycle.txt (24 GB PRO tier price),emberserve series all ran on RTX 4090 under the 24 GB PRO tier
-4090-vol,network-volume run,RTX 4090,,,"network volume experiment; price not recorded"
-A100-vol,network-volume run,A100,,,"network volume experiment; price not recorded"
-A100-vol-parked,network-volume run,A100,,,"parked worker reused; price not recorded"
-A100-vol2,network-volume run,A100,,,"network volume experiment; price not recorded"
-A100-vol-nocache,network-volume run,A100,,,"volume populated with no cache; price not recorded"
-A100-vol-nocache-c1,network-volume run,A100,,,"cache-hit cycle 1; price not recorded"
-A100-vol-nocache-c2,network-volume run,A100,,,"cache-hit cycle 2; price not recorded"
-H100-vol2,network-volume run,H100,,,"network volume experiment; price not recorded"
-H100-vol2-ghost,network-volume run,H100,,,"ghost worker (hung at model init); price not recorded"
+gpu_label,tier,gpu_model,price_per_hr_usd,evidence,source,notes
+24GB-0.69,24 GB flex,,0.69,unknown,seeds/evidence/gpu_per_cycle.txt (runs 1-5),GPU model not read off the Workers tab before the workers were gone; 21 tok/s single-stream on 8B bf16 is consistent with an L4 — not asserted
+24GBPRO-1.10,24 GB PRO flex,RTX 4090,1.1,observed,"seeds/evidence/gpu_per_cycle.txt (run 6 cycles 0-2: RTX 4090, US-NC-1)",PRO 6000 MIG 24GB placements (US-PA-1 / US-WA-1) hung at model init and served no request
+48GB-1.22,48 GB flex,RTX A6000,1.22,inferred,worker log file names q32awq_cold_worker_A6000_SE1.log / q32awq_runs_worker_A6000_SE1.log for this endpoint's runs; quality.csv rate_source for Qwen3-32B-AWQ says RTX A6000 48G,"the same $1.22 tier also served A40s (runs 7-8), so price alone does not identify the GPU; the 32B-AWQ endpoint 29fqxvabtskzb8 is the only user of this label"
+48GB-A40-1.22,48 GB flex,A40,1.22,observed,seeds/evidence/gpu_per_cycle.txt (runs 7-8) and the label itself,
+RTX 4090,24 GB PRO flex,RTX 4090,1.1,inferred,emberserve series labels name the GPU; the $/hr is the 24 GB PRO tier price from seeds/evidence/gpu_per_cycle.txt,emberserve endpoints were created with the RTX 4090 tier; price assumed equal to the Pulse 24 GB PRO tier on Sep 23
+4090-vol,network-volume run,RTX 4090,,inferred,label,network volume experiment; price not recorded
+A100-vol,network-volume run,A100,,inferred,label,network volume experiment; price not recorded
+A100-vol-parked,network-volume run,A100,,inferred,label,parked worker reused; price not recorded
+A100-vol2,network-volume run,A100,,inferred,label,network volume experiment; price not recorded
+A100-vol-nocache,network-volume run,A100,,inferred,label,volume populated with no cache; price not recorded
+A100-vol-nocache-c1,network-volume run,A100,,inferred,label,cache-hit cycle 1; price not recorded
+A100-vol-nocache-c2,network-volume run,A100,,inferred,label,cache-hit cycle 2; price not recorded
+H100-vol2,network-volume run,H100,,inferred,label,network volume experiment; price not recorded
+H100-vol2-ghost,network-volume run,H100,,inferred,label,ghost worker (hung at model init); price not recorded

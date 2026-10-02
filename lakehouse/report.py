@@ -28,11 +28,12 @@ VIEWS = {
     "gold_worker_boot_phases": (
         "worker-vllm boot anatomy, per worker log",
         "Where do the seconds go between `vllm serve` and 'Application startup complete'?",
-        ["source_file", "vllm_version", "start_to_weights_s", "weights_load_s", "torch_compile_s", "graph_capture_s",
+        ["source_file", "vllm_version", "graph_mode", "start_to_weights_s", "weights_load_s", "torch_compile_s", "graph_capture_s",
          "init_engine_s", "start_to_api_ready_s", "api_ready_to_first_job_s", "kv_cache_gib"]),
     "gold_flashboot_hit_rate": (
-        "FlashBoot hit rate",
-        f"Share of cold-labelled requests served by a resume or a still-warm worker (delay below the threshold).",
+        "Fast cold responses (FlashBoot proxy)",
+        "Share of *successful* cold-labelled requests answered under the threshold — a FlashBoot resume or a worker that "
+        "was still warm; the data cannot tell them apart.",
         ["engine", "model", "endpoint_id", "flashboot_setting", "n_cold", "n_hits", "hit_rate", "hit_delay_ms_p50",
          "miss_delay_ms_p50"]),
     "gold_coldstart_by_gpu_image": (
@@ -41,9 +42,10 @@ VIEWS = {
         ["engine", "model", "gpu_model", "weights_mode", "flashboot", "kind", "n", "n_flashboot_hits", "delay_ms_p50",
          "delay_ms_p90", "delay_ms_max", "exec_ms_p50", "est_cost_usd_p50"]),
     "gold_cost_per_job": (
-        "Estimated cost per Serverless request",
-        "(delay_ms + exec_ms) / 3.6e6 × $/hr of the tier; only rows whose tier price is known.",
-        ["engine", "model", "gpu_model", "gpu_tier", "weights_mode", "kind", "price_per_hr_usd", "n", "billed_s_p50",
+        "Request-duration cost proxy per Serverless request",
+        "(delay_ms + exec_ms) / 3.6e6 × $/hr of the tier; only rows whose tier price is known. Not billed time: Runpod bills "
+        "worker start, execution and idle per worker, so this is a comparison metric, not an invoice estimate.",
+        ["engine", "model", "gpu_model", "gpu_tier", "weights_mode", "kind", "price_per_hr_usd", "n", "request_duration_s_p50",
          "est_cost_usd_p50", "est_cost_usd_total"]),
     "gold_scoring_cost_per_batch": (
         "Scoring job: $ and seconds per article, by backend",
@@ -52,8 +54,9 @@ VIEWS = {
          "est_cost_usd", "est_cost_usd_per_1k_articles"]),
     "gold_sweep_latency": (
         "Load sweeps on Serverless (emberserve)",
-        "TTFT / e2e / throughput per request rate; `inf` = all 200 requests sent at once.",
-        ["system", "endpoint_mode", "request_rate", "max_concurrency", "completed", "failed", "requests_per_s",
+        "TTFT / e2e / throughput per request rate. `inf` = unpaced submission (all 200 requests queued at t=0), capped by "
+        "`max_concurrency` where set; systems differ in model size (`7b_` = Qwen2.5-7B, otherwise Qwen2.5-0.5B) and endpoint mode.",
+        ["system", "served_model", "endpoint_mode", "request_rate", "max_concurrency", "completed", "failed", "requests_per_s",
          "output_tok_s", "ttft_ms_p50", "ttft_ms_p99", "e2e_ms_p50", "e2e_ms_p99"]),
 }
 

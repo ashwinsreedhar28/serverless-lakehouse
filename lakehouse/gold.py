@@ -37,6 +37,8 @@ def write(df: DataFrame, fmt: str, name: str) -> int:
 
 
 def pct(col: str, q: float, alias: str):
+    """Spark percentile_approx: returns an actual observed value (no interpolation), so the p50 of four values is
+    the second one, not the mean of the middle two. The README states this convention next to every quoted median."""
     return F.percentile_approx(col, q).alias(alias)
 
 
@@ -61,6 +63,9 @@ def coldstart_by_gpu_image(req: DataFrame) -> DataFrame:
 
 
 def flashboot_hit_rate(req: DataFrame) -> DataFrame:
+    """Fast-cold-response rate, a *proxy* for FlashBoot: successful cold-labelled requests answered under the
+    threshold. Denominator = successful cold requests (failures excluded). It cannot tell a FlashBoot resume from a
+    worker that was still warm; Runpod's own accounting is not in the data."""
     cold = req.where("ok and kind = 'cold'")
     hit = F.col("is_flashboot_hit")
     return (cold.groupBy("engine", "model", "endpoint_id", F.col("flashboot").alias("flashboot_setting"))
@@ -144,20 +149,26 @@ def worker_boot_phases(ev: DataFrame) -> DataFrame:
         F.max(F.when(m.startswith("Available KV cache memory"), num(r"([\d.]+) GiB"))).alias("kv_cache_gib"),
         F.max(F.when(m.startswith("Maximum concurrency"), num(r": ([\d.]+)x"))).alias("max_concurrency_x"),
         F.max(F.when(m.startswith("Initializing a V1 LLM engine"), F.regexp_extract(m, r"\((v[\d.]+)\)", 1))).alias("vllm_version"),
+        F.max(F.when(m.rlike(r"Capturing CUDA graphs \(FULL\)"), "FULL")).alias("_g_full"),
+        F.max(F.when(m.rlike(r"Capturing CUDA graphs \(PIECEWISE\)"), "PIECEWISE")).alias("_g_piece"),
         F.max(F.when(m.startswith("--- Starting Serverless Worker"), F.regexp_extract(m, r"Version ([\d.]+)", 1))).alias("runpod_sdk_version"),
         F.sum(F.when(F.col("event_kind") == "progress", 1).otherwise(0)).alias("n_progress_lines"),
         F.count("*").alias("n_lines"),
     )
     first_job = (e.where(m.startswith("Jobs in queue"))
                   .groupBy("source_file", "_wk", "boot_index").agg(F.min("ts_utc").alias("t_first_job_seen")))
+    # the graph-capture mode is a configuration, and it — not the vLLM version — decides whether capture takes
+    # 5 s or 80 s: FULL graphs are captured per batch-size bucket for the whole model, PIECEWISE only around attention
     out = (g.join(first_job, ["source_file", "_wk", "boot_index"], "left")
+            .withColumn("graph_mode", F.when(F.col("_g_full").isNotNull() & F.col("_g_piece").isNotNull(), "FULL+PIECEWISE")
+                                       .otherwise(F.coalesce("_g_full", "_g_piece")))
             .withColumn("start_to_weights_s", F.col("t_weights_loaded").cast("double") - F.col("t_start_vllm").cast("double"))
             .withColumn("start_to_api_ready_s", F.col("t_api_ready").cast("double") - F.col("t_start_vllm").cast("double"))
             .withColumn("api_ready_to_sdk_s", F.col("t_sdk_started").cast("double") - F.col("t_api_ready").cast("double"))
             .withColumn("api_ready_to_first_job_s",
                         F.when(F.col("t_first_job_seen") >= F.col("t_api_ready"),
                                F.col("t_first_job_seen").cast("double") - F.col("t_api_ready").cast("double")))
-            .select("source_file", "boot_index", "worker_id", "ts_format", "vllm_version", "runpod_sdk_version",
+            .select("source_file", "boot_index", "worker_id", "ts_format", "vllm_version", "runpod_sdk_version", "graph_mode",
                     "t_start_vllm", "t_api_ready",
                     "start_to_weights_s", "weights_load_s", "model_gib", "model_load_s", "torch_compile_s",
                     "graph_capture_s", "init_engine_s", "init_engine_compile_s", "start_to_api_ready_s",
@@ -179,10 +190,12 @@ def coldstart_events(req: DataFrame) -> DataFrame:
 def cost_per_job(req: DataFrame) -> DataFrame:
     priced = req.where("ok and price_per_hr_usd is not null")
     return (priced.groupBy("engine", "model", "gpu_model", "gpu_tier", "weights_mode", "kind", "price_per_hr_usd")
-                  .agg(F.count("*").alias("n"), pct("billed_s", 0.5, "billed_s_p50"), pct("billed_s", 0.9, "billed_s_p90"),
+                  .agg(F.count("*").alias("n"), pct("request_duration_s", 0.5, "request_duration_s_p50"),
+                       pct("request_duration_s", 0.9, "request_duration_s_p90"),
                        pct("est_cost_usd", 0.5, "est_cost_usd_p50"), F.round(F.sum("est_cost_usd"), 4).alias("est_cost_usd_total"))
                   .withColumn("gpu_model", F.coalesce("gpu_model", F.lit("not captured")))
-                  .withColumn("cost_formula", F.lit("(delay_ms + exec_ms) / 3.6e6 * price_per_hr_usd"))
+                  .withColumn("cost_formula", F.lit("request-duration proxy: (delay_ms + exec_ms) / 3.6e6 * price_per_hr_usd; "
+                                                    "not billed time (Runpod bills worker start + execution + idle per worker)"))
                   .orderBy("engine", "model", "kind", "gpu_tier"))
 
 

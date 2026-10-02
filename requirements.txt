@@ -3,3 +3,4 @@
 pyspark==3.5.9
 delta-spark==3.3.3
 pytest==8.4.1
+pyarrow==25.0.1          # tests read parquet tables without a JVM

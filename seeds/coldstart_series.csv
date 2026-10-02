@@ -5,10 +5,10 @@ series_label,engine,engine_build,model,gpu_model,flashboot,flashboot_source,weig
 7b_4090_flashboot_on,emberserve,,Qwen2.5-7B,RTX 4090,on,label,baked,25,run 1 cold request failed; its warm request (12.6 s delay) was the real boot
 pagedserve_qwen3_8b_4090_fresh_host,emberserve,a2742f9,Qwen3-8B,RTX 4090,unknown,not recorded,baked,27,first job to a brand-new endpoint; includes image pull on a fresh host
 pagedserve_qwen3_8b_4090_flashboot_off,emberserve,433976c (v0.9.8),Qwen3-8B,RTX 4090,off,label,baked,27,
-pagedserve_slim_qwen3_8b_4090_first_after_rollout,emberserve,15831d4,Qwen3-8B,RTX 4090,off,inferred from endpoint ri6eo614hmu510 (same endpoint as the labelled-off series),fetched,,before fix fa672f0: piecewise graphs captured while shards still downloading; host already had most image layers
+pagedserve_slim_qwen3_8b_4090_first_after_rollout,emberserve,15831d4,Qwen3-8B,RTX 4090,unknown,"not recorded for this run (same endpoint ri6eo614hmu510 as the labelled-off series, but a setting can change between series)",fetched,,before fix fa672f0: piecewise graphs captured while shards still downloading; host already had most image layers
 pagedserve_slim_qwen3_8b_4090_fresh_host,emberserve,slim,Qwen3-8B,RTX 4090,unknown,not recorded,fetched,,fresh host: includes image pull
-pagedserve_slim_qwen3_8b_4090_graphsfirst,emberserve,d5e955e,Qwen3-8B,RTX 4090,off,inferred from endpoint ri6eo614hmu510,fetched,,CUDA graphs captured before the weights arrive
-pagedserve_slim_qwen3_8b_4090_graphsfirst_2,emberserve,d5e955e,Qwen3-8B,RTX 4090,off,inferred from endpoint ri6eo614hmu510,fetched,,repeat of graphsfirst
+pagedserve_slim_qwen3_8b_4090_graphsfirst,emberserve,d5e955e,Qwen3-8B,RTX 4090,unknown,not recorded for this run (same endpoint as the labelled-off series),fetched,,CUDA graphs captured before the weights arrive
+pagedserve_slim_qwen3_8b_4090_graphsfirst_2,emberserve,d5e955e,Qwen3-8B,RTX 4090,unknown,not recorded for this run (same endpoint as the labelled-off series),fetched,,repeat of graphsfirst
 pagedserve_slim_qwen3_8b_4090_off_v2,emberserve,fa672f0,Qwen3-8B,RTX 4090,off,label,fetched,,
 vllm_qwen3_8b_4090_flashboot_on,worker-vllm,v2.28.0,Qwen3-8B,RTX 4090,on,note (label at run time said off; FlashBoot was on),fetched,,samples 1-2 full boots (FlashBoot misses); sample 3 a FlashBoot resume (532 ms)
 vllm_qwen3_8b_4090_flashboot_off_b,worker-vllm,v2.28.0,Qwen3-8B,RTX 4090,off,label,fetched,,

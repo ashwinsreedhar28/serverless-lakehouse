@@ -36,8 +36,10 @@ flowchart LR
 ```
 
 Each arrow is one `make` target and one Python module, and every layer can be rebuilt from the one before
-it. `data/landing/` is in git so a clone reproduces every table from `make bronze` alone; in a deployed
-version `LANDING_DIR` would be an S3 prefix and nothing downstream would change.
+it. `data/landing/` is in git so a clone reproduces every table from `make bronze` alone. The landing path is a
+local filesystem path today (`pathlib`, plain file reads); pointing it at object storage would mean reading
+landing files through Spark or `fsspec` instead of `Path.read_text` — a contained change, listed under future work,
+not something the current code does.
 
 ## Quickstart (macOS, Apple Silicon)
 
@@ -66,13 +68,15 @@ that cannot reach Maven Central.
 - **Hugging Face Space** (`space/`): a Streamlit app — `space/app.py` + `space/data/gold.json`. No Spark on the
   Space; it only draws what gold says. Run it locally with `make space`. Deployment is a GitHub Action
   (`.github/workflows/sync-space.yml`) that uploads `space/` to the Space whenever it changes on `main`; one-time
-  setup is a Streamlit-SDK Space on huggingface.co, an `HF_TOKEN` secret and an `HF_SPACE` variable
-  (`<hf-username>/serverless-lakehouse`) on the GitHub repo. `make space-push HF_SPACE=…` does the same upload by hand.
+  setup is a **Docker-SDK** Space on huggingface.co (the built-in Streamlit SDK is deprecated for new Spaces;
+  `space/Dockerfile` runs Streamlit on port 7860), an `HF_TOKEN` secret and an `HF_SPACE` variable
+  (`<hf-username>/serverless-lakehouse`) on the GitHub repo. The upload uses the `hf` CLI from `huggingface_hub`
+  ≥ 1.0 (`huggingface-cli` was removed). `make space-push HF_SPACE=…` does the same upload by hand.
 - **Static page** (`docs/dashboard.html`): the gold JSON embedded in one self-contained HTML file with SVG charts;
   opens from disk or GitHub Pages, no dependencies.
 
 Both show: every cold start as a dot per engine and weights mode (log scale, FlashBoot hits hollow), worker-vllm's
-boot phases stacked per log, the engine comparison with its cohorts, FlashBoot hit rate, $ per cold start, $ per
+boot phases stacked per log, the engine comparison with its cohorts, fast cold responses (the FlashBoot proxy), $ per cold start (request-duration proxy), $ per
 1,000 scored articles, and TTFT against request rate for the Serverless sweeps.
 
 ## Layout
@@ -161,9 +165,9 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 | table | one row is | rows | what silver did to get it |
 |---|---|---|---|
 | `dim_coldstart_series` | one emberserve cold-start series | 13 | seed: engine, build, model, GPU, FlashBoot setting (+ how it is known), weights mode |
-| `dim_gpu_label` | one GPU label as the sources spell it | 14 | seed: tier, GPU model where recorded, $/hr with its source |
-| `dim_coldstart_run_notes` | one (series, run) with a fact the files don't carry | 7 | seed: `host_state` (fresh / warm / partial / FlashBoot resume) with its source; silver defaults every other run to `unknown` |
-| `silver_coldstart_requests` | one Serverless request, cold or warm, from either source | 149 | emberserve `cold_json`/`warm_json` exploded with `from_json`; Pulse CSVs typed; the 15 duplicate rows of `results_v0.csv` ≡ `results_runs1-3.csv` dropped; model names canonicalised; joined to both dims; derived `is_flashboot_hit` (cold ∧ ok ∧ delay < 5 000 ms), `billed_s`, `est_cost_usd` |
+| `dim_gpu_label` | one GPU label as the sources spell it | 14 | seed: tier, GPU model where known, $/hr, `evidence` (observed / inferred / unknown) and its source |
+| `dim_coldstart_run_notes` | one (series, run) with a fact the files don't carry | 7 | seed: `host_state` (fresh / warm / partial / FlashBoot resume) with `evidence` (author testimony / file note / author label) and its source; silver defaults every other run to `unknown` |
+| `silver_coldstart_requests` | one Serverless request, cold or warm, from either source | 149 | emberserve `cold_json`/`warm_json` exploded with `from_json`; Pulse CSVs typed; the 15 duplicate rows of `results_v0.csv` ≡ `results_runs1-3.csv` dropped; model names canonicalised; joined to both dims; derived `is_flashboot_hit` (cold ∧ ok ∧ delay < 5 000 ms), `request_duration_s`, `est_cost_usd`; `host_state` from the run-notes seed; `source_sha256` kept on every row |
 | `silver_coldstart_phases` | one (series, run, phase or timeline mark) | 307 | emberserve `phases_s` and `timeline.marks` maps exploded |
 | `silver_sweep_summaries` | one request-rate run of a load sweep | 38 | summary/trace/args/server_latency JSON flattened to columns; `request_rate: null` → `inf` with `is_unbounded`; `endpoint_id` and queue vs load-balancer parsed from the URL |
 | `silver_sweep_requests` | one request of a sweep | 1,000 | `ttft_ms`, `e2e_ms`, `tpot_ms`, `arrival_offset_s` from the monotonic-clock fields; null when the request failed |
@@ -176,21 +180,27 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 | table | the question it answers | rows |
 |---|---|---|
 | `gold_engine_comparison` | same GPU (RTX 4090), same model (Qwen3-8B): full cold boot p50/mean/min/max, warm delay and exec, $ per cold start — emberserve baked vs fetched vs worker-vllm; `scope=pooled` rows plus one row per `cohort` (fresh host / warm host / partial host / Pulse-era) | 11 |
-| `gold_worker_boot_phases` | worker-vllm's boot anatomy from its own log lines: seconds to weights, `torch.compile`, CUDA-graph capture, `init engine`, start → API ready, ready → first job; per log file and boot | 15 |
-| `gold_flashboot_hit_rate` | share of cold-labelled requests answered in under 5 s, per engine × endpoint × FlashBoot setting | 13 |
+| `gold_worker_boot_phases` | worker-vllm's boot anatomy from its own log lines: seconds to weights, `torch.compile`, CUDA-graph capture (+ `graph_mode`), `init engine`, start → API ready, ready → first job; per log file and boot | 15 |
+| `gold_flashboot_hit_rate` | fast cold responses (FlashBoot proxy): share of successful cold-labelled requests answered in under 5 s, per engine × endpoint × FlashBoot setting | 13 |
 | `gold_coldstart_by_gpu_image` | delay/exec distribution per engine × model × GPU × weights mode × FlashBoot × kind | 30 |
-| `gold_cost_per_job` | `(delay_ms + exec_ms) / 3.6e6 × $/hr` per engine × model × tier × kind, only where the tier price is known | 14 |
+| `gold_cost_per_job` | request-duration cost proxy `(delay_ms + exec_ms) / 3.6e6 × $/hr` per engine × model × tier × kind, only where the tier price is known; not billed time | 14 |
 | `gold_scoring_cost_per_batch` | $ and seconds per article for the Pulse scoring job, per backend × model | 14 |
-| `gold_sweep_latency` | TTFT / e2e / throughput per system × request rate, with per-request p99 where records exist | 38 |
+| `gold_sweep_latency` | TTFT / e2e / throughput per system × request rate (`inf` = unpaced, capped by `max_concurrency` where set), with `served_model` and per-request p99 where records exist | 38 |
 
 Headline numbers today (`docs/gold_report.md`), Qwen3-8B on an RTX 4090, **pooled over every full boot**: a cold
 boot is **17 s** with emberserve and baked weights (n=4), **38 s** with emberserve fetching weights at start (n=11),
 and **210 s** with worker-vllm (n=7). The pooled worker-vllm figure mixes three cohorts, which the same table lists
 separately: a fresh host that had to pull the image (210 s, n=1), two same-night reruns on a warm host (**147.5 s**
 mean — the pair behind the Sep 30 write-up), and four Sep 23 Pulse-era runs on worker-vllm 2.27 with endpoint
-rollouts (243 s median). Inside a worker-vllm boot, `torch.compile` is 24–65 s, CUDA-graph capture 5–8 s on vLLM
-0.30 but 75–81 s on 0.28 (full graphs), and `init engine` 25–140 s. The two worker logs with a warm compile cache
-show `torch.compile` at **1.1–1.3 s** instead of 44 s and start → API ready at 97 s instead of 173 s.
+rollouts (243 s median). Inside a worker-vllm boot, `torch.compile` is 24–65 s and `init engine` 25–140 s;
+CUDA-graph capture is 5–8 s on the RTX 4090 / A100 / H100 boots, 19–20 s for the 32B-AWQ model on an RTX A6000,
+and 75–81 s on the two Sep 23 boots on the 24 GB-tier GPU that was never identified — it tracks GPU and model, not
+vLLM version (nearly every boot captured both FULL and PIECEWISE graphs; `graph_mode` is a column). The two worker
+logs with a warm compile cache show `torch.compile` at **1.1–1.3 s** instead of 44 s and start → API ready at 97 s
+instead of 173 s. Medians are Spark `percentile_approx`: an observed value, no interpolation (the four baked-weight
+delays are 16 208 / 17 156 / 17 717 / 328 385 ms, so p50 is 17 156, where an interpolated median would say 17 437).
+These are observational cohorts — different builds, hosts, dates and endpoint settings — not a controlled
+experiment, so they describe what happened, not an engine-only speed-up.
 
 ## Decisions
 
@@ -219,17 +229,29 @@ show `torch.compile` at **1.1–1.3 s** instead of 44 s and start → API ready 
     source root and falls back to `~/pagedserve` locally. File names and values inside the data keep the old
     name — bronze does not rewrite source content.
 11. **Silver and gold are rebuilt in full (`overwrite`), bronze is never rewritten.** They are deterministic
-    functions of bronze + seeds; appending to them would only create a second dedupe problem. Silver reads each
-    source file's *latest* bronze ingest, so a re-landed file replaces its rows downstream while bronze keeps both.
-12. **Facts the machines did not write live in `seeds/`, with their source.** The GPU behind a tier label, the
-    FlashBoot setting of a series, and $/hr were read off the Runpod console or run notes. Each seed row names
-    where it came from (`flashboot_source`, `price_source`), and silver prints any label without a seed row
-    instead of silently nulling it.
-13. **FlashBoot hit = cold-labelled request with `delay_ms` < 5 000.** Observed resumes are 0.5–0.9 s and the
-    fastest full boot is 12.6 s, so the threshold is not sensitive. It cannot distinguish a FlashBoot resume from a
-    worker that was simply still warm (Pulse run 3 was one), so the metric is named for what it measures.
-14. **Cost is an estimate, labelled as such.** `(delay_ms + exec_ms) / 3.6e6 × price_per_hr_usd`. `delay_ms` includes
-    queue time before a worker exists, which Runpod does not bill, so this is an upper bound; the formula is a
+    functions of bronze + seeds + the landing manifest; appending to them would only create a second dedupe
+    problem. Silver selects each file's rows by the manifest's current (path, sha256) pair, never by "newest
+    ingest": that handles a reverted file (A → B → A appends nothing, yet A is current), a replacement with no
+    records, and a rename. If a manifest version is missing from bronze, silver stops and says `make bronze`.
+    `tests/test_snapshot_scenarios.py` runs those cases end to end. (The first external audit found the
+    newest-timestamp rule wrong on all three.)
+12. **Facts the machines did not write live in `seeds/`, with their source and an evidence grade.** The GPU
+    behind a tier label, the FlashBoot setting of a series, host state per run and $/hr were read off the Runpod
+    console or run notes. Each seed row names where it came from and whether the value is `observed`, `inferred`
+    or `unknown` (`evidence`, `flashboot_source`); the hand-written placement notes are committed as
+    `seeds/evidence/gpu_per_cycle.txt`. Silver prints any label without a seed row instead of silently nulling
+    it. Where the source does not establish the fact the value is `unknown`, not a guess: the FlashBoot setting
+    of three series that merely share an endpoint with a labelled-off series, and the GPU behind the 24 GB tier.
+    The 48 GB tier label was first seeded as A40 from its price; the audit caught that the same price also served
+    an RTX A6000, and the worker logs for that endpoint are named `A6000`, so it is now `RTX A6000, inferred`.
+13. **"FlashBoot hit" is a proxy: a *successful* cold-labelled request with `delay_ms` < 5 000.** Observed
+    resumes are 0.5–0.9 s and the fastest full boot is 12.6 s, so the threshold is not sensitive. Denominator =
+    successful cold requests (failures excluded). It cannot distinguish a FlashBoot resume from a worker that was
+    simply still warm (Pulse run 3 was one), so the table is titled "fast cold responses (FlashBoot proxy)".
+14. **Cost is a request-duration proxy, not billed time.** `request_duration_s = (delay_ms + exec_ms) / 1000`,
+    `est_cost_usd = request_duration_s / 3600 × price_per_hr_usd`. Runpod bills worker start, execution and idle
+    phases per worker; a per-request sum includes unbilled queue time (over) and omits billed idle and startup
+    outside the request (under), so it bounds nothing. It is a like-for-like comparison metric; the formula is a
     column in `gold_cost_per_job`. Rows without a known tier price get null, not a guess.
 15. **Worker-log boot segmentation.** A boot opens at the wrapper's `Starting vLLM: vllm serve …` line (not vLLM's
     own `Starting vLLM server on http://…`, which comes ~2 min later), per worker where the export names one.
@@ -245,15 +267,33 @@ show `torch.compile` at **1.1–1.3 s** instead of 44 s and start → API ready 
     fact that neither the files nor the series carry, so it lives in `seeds/coldstart_run_notes.csv` with a
     source per row; runs without a row are `unknown`, never guessed.
 
+## Audit
+
+Before publishing, the whole repo was handed to an external reviewer model (`scripts/audit_bundle.py` packs it;
+`audit/AUDIT_PROMPT.md` is the brief). It found five blocking issues, all fixed and all now covered by tests or
+wording: silver selected file versions by newest ingest instead of by the manifest (wrong on revert, rename and
+empty replacement); `regexp_extract` returning `""` nulled every load-balancer endpoint id; a Streamlit percent
+format; a Space deployment built on the deprecated Streamlit SDK and the removed `huggingface-cli`; and a cost
+"upper bound" claim the billing model does not support. It also downgraded several seed values from asserted to
+inferred or unknown and caught the A40/A6000 mix-up. The findings are in the git history (commit "Audit fixes").
+
+Future work: object-storage landing (read landing files through Spark/`fsspec`), a `dim_date` and date
+partitions before the data grows, bronze schema migration for a JSON scalar that changes type (today the explicit
+`StructType` raises), and recording GPU model, host state and FlashBoot at benchmark time so the seeds shrink.
+
 ## Secrets
 
 Worker logs can contain whatever the container printed, and sweep `args` carry an `api_key` field, so:
 
-- `lakehouse/redact.py` holds one pattern list (HF `hf_…`, Runpod `rpa_…`, `sk-…` keys, GitHub, AWS,
-  `Bearer …`, and `key: value` forms where the key is `api_key|secret|token|password|authorization`).
-  `make land` applies it to every byte that enters the repo and records per-file redaction counts in the
-  manifest (currently 0 — the sources were already clean; the `api_key` in sweep args is `"<redacted>"` at source).
+- `lakehouse/redact.py` holds one pattern list (HF `hf_…`, Runpod `rpa_…`, `sk-…` keys, GitHub classic and
+  fine-grained tokens, AWS access keys, Slack tokens, private-key headers, JWTs, `Bearer …`, and `key: value`
+  forms whose key name contains `api_key|secret|token|password|authorization|credential`, compound names such
+  as `AWS_SECRET_ACCESS_KEY` included, with base64 values allowed and numeric values excluded). `make land`
+  applies it to every byte that enters the repo and records per-file redaction counts in the manifest
+  (currently 0 — the sources were already clean; the `api_key` in sweep args is `"<redacted>"` at source).
 - `.env` and `*.env` are refused by name in `land`, `.gitignore` and the pre-commit hook, whatever they contain.
 - `make check-secrets` scans every tracked file with the same patterns; the pre-commit hook (`make hooks`)
-  runs it on staged content, so a future log with a token in it cannot be committed.
+  runs it on staged content. One pattern list means one blind spot shared by landing and the hook, so CI
+  (`.github/workflows/ci.yml`) also runs **gitleaks**, an independent scanner with its own rules. Together they
+  catch the credential shapes in both rule sets — a bounded guarantee, not "nothing can leak".
 - `tests/test_landing.py` asserts the committed landing zone matches its manifest byte-for-byte and contains no match.
