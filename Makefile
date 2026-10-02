@@ -48,8 +48,8 @@ java-check:
 	  echo "  or once: sudo ln -sfn \"\$$(brew --prefix openjdk@17)/libexec/openjdk.jdk\" /Library/Java/JavaVirtualMachines/openjdk-17.jdk"; \
 	  exit 1; }
 	@java -version 2>&1 | grep -qE 'version "(11|17|21)' \
-	  || { java -version 2>&1 | head -1; echo "need Java 11, 17 or 21 for Spark 3.5"; exit 1; }
-	@echo "java: $$(java -version 2>&1 | head -1)   JAVA_HOME=$(JAVA_HOME)"
+	  || { java -version 2>&1 | grep -m1 version; echo "need Java 11, 17 or 21 for Spark 3.5"; exit 1; }
+	@echo "java: $$(java -version 2>&1 | grep -m1 version)   JAVA_HOME=$(JAVA_HOME)"
 
 land: $(VENV)/.installed
 	$(PYTHON) -m lakehouse.land --emberserve "$(EMBERSERVE_DIR)" --pulse "$(PULSE_DIR)"
