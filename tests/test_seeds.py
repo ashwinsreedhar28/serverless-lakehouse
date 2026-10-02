@@ -49,5 +49,15 @@ def test_run_notes():
     assert len({(r["series_label"], r["run_index"]) for r in data}) == len(data)
 
 
+def test_request_overrides():
+    cols, data = rows("coldstart_request_overrides.csv")
+    assert cols == ["endpoint_id", "ts_utc", "gpu_label", "evidence", "note", "source"]
+    labels = {r["gpu_label"] for _, r in [(None, x) for x in rows("gpu_labels.csv")[1]]}
+    for r in data:
+        assert r["gpu_label"] in labels, r            # an override must point at a known label
+        assert r["evidence"] == "observed", r          # overrides are only for placements someone saw
+        assert r["ts_utc"].endswith("+00:00"), r
+
+
 def test_evidence_file_present():
     assert (ROOT / "evidence" / "gpu_per_cycle.txt").is_file()

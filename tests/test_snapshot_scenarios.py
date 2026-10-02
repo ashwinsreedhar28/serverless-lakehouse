@@ -56,8 +56,14 @@ class Pipeline:
         return self.run("land", "--emberserve", str(self.src / "emberserve"), "--pulse", str(self.src / "pulse"),
                         "--landing-dir", self.env["LANDING_DIR"])
 
-    def bronze(self, label: str):
-        return self.run("bronze", "--run-label", label, "--format", "parquet", "--landing-dir", self.env["LANDING_DIR"])
+    def bronze(self, label: str, *extra: str):
+        return self.run("bronze", "--run-label", label, "--format", "parquet", "--landing-dir", self.env["LANDING_DIR"], *extra)
+
+    def silver_fails(self) -> str:
+        r = subprocess.run([sys.executable, "-m", "lakehouse.silver", "--format", "parquet"], cwd=ROOT, env=self.env,
+                           capture_output=True, text=True)
+        assert r.returncode != 0, "silver should have refused"
+        return r.stdout + r.stderr
 
     def silver(self):
         return self.run("silver", "--format", "parquet")
@@ -96,7 +102,9 @@ def test_revert_rename_and_empty_records_follow_the_manifest(pipe: Pipeline):
     pipe.silver()
     assert pipe.count("silver_coldstart_requests") == 4                 # reverted file selected again, not "newest"
 
-    f.rename(pipe.results / "serverless_coldstart_renamed.json"); pipe.land(); pipe.bronze("r4"); pipe.silver()
+    f.rename(pipe.results / "serverless_coldstart_renamed.json"); out = pipe.land(); pipe.bronze("r4"); pipe.silver()
+    assert "pruned 1 stale" in out                                      # landing is a mirror: the old path is gone
+    assert not (Path(pipe.env["LANDING_DIR"]) / "emberserve/results/serverless_coldstart_a.json").exists()
     assert pipe.count("silver_coldstart_requests") == 4
     assert pipe.count("silver_coldstart_requests", source_file="emberserve/results/serverless_coldstart_a.json") == 0
 
@@ -118,6 +126,33 @@ def test_interrupted_run_repairs_the_ingest_log(pipe: Pipeline):
 
 def test_silver_refuses_when_bronze_lacks_the_current_version(pipe: Pipeline):
     (pipe.results / "serverless_coldstart_new.json").write_text(coldstart("series_new", 1)); pipe.land()
-    r = subprocess.run([sys.executable, "-m", "lakehouse.silver", "--format", "parquet"], cwd=ROOT, env=pipe.env,
-                       capture_output=True, text=True)
-    assert r.returncode != 0 and "not in bronze" in (r.stdout + r.stderr)
+    assert "not in bronze" in pipe.silver_fails()
+    pipe.bronze("r8"); pipe.silver()
+
+
+def test_partial_multi_table_ingest_is_refused_then_repaired(pipe: Pipeline):
+    sw = pipe.results / "runpod_serverless_s.json"
+    sw.write_text(sweep(True)); pipe.land(); pipe.bronze("r9")
+    shutil.rmtree(Path(pipe.env["LAKEHOUSE_DIR"]) / "bronze" / "bronze_sweep_records")   # as if the run died mid-way
+    shutil.rmtree(Path(pipe.env["LAKEHOUSE_DIR"]) / "bronze" / "bronze_ingest_log")
+    assert "bronze_sweep_records" in pipe.silver_fails()                # summary present, records missing → refuse
+    out = pipe.bronze("r10")                                            # per-table skip re-appends only the records
+    assert "bronze_sweep_records" in out
+    pipe.silver()
+    assert pipe.count("silver_sweep_requests") == 2
+
+
+def test_empty_file_is_a_complete_zero_row_ingest(pipe: Pipeline):
+    (pipe.results / "serverless_coldstart_empty_worker_log.txt").write_text("")
+    pipe.land(); out = pipe.bronze("r11")
+    assert "bronze_worker_log_lines" in out                             # a zero-row append is still logged
+    pipe.silver()                                                       # guard accepts it via the ledger
+    assert pipe.count("silver_worker_log_events") == 0
+
+
+def test_force_reingest_does_not_duplicate_silver_events(pipe: Pipeline):
+    before = pipe.count("silver_coldstart_requests")
+    out = pipe.bronze("r12", "--force")
+    assert "bronze_coldstart_runs" in out                               # appended again
+    pipe.silver()
+    assert pipe.count("silver_coldstart_requests") == before            # one ingest per (file, sha) selected

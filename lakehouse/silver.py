@@ -55,22 +55,37 @@ def latest_per_file(df: DataFrame) -> DataFrame:
     handles all three and never depends on ingest timestamps.
     """
     assert _SNAPSHOT is not None, "set_snapshot() must run before any silver builder"
-    return df.join(_SNAPSHOT, ["source_file", "source_sha256"], "inner")
+    cur = df.join(_SNAPSHOT, ["source_file", "source_sha256"], "inner")
+    # --force can append the same (file, sha) twice; take exactly one ingest of it (the latest, run_label as tie-break)
+    w = Window.partitionBy("source_file", "source_sha256")
+    return (cur.withColumn("_rank", F.dense_rank().over(w.orderBy(F.col("ingested_at").desc(), F.col("run_label").desc())))
+               .where(F.col("_rank") == 1).drop("_rank"))
 
 
 def assert_snapshot_in_bronze(spark: SparkSession, fmt: str, manifest: dict) -> None:
-    """Every manifest (file, sha) must exist in at least one bronze data table, or silver would silently drop it."""
-    present: set[tuple[str, str]] = set()
+    """Every (table, file, sha) triple the current manifest implies must be complete in bronze.
+
+    "Complete" = the triple is in the data table, or the ingest ledger records it (a zero-row file has no data
+    rows but a logged append). Checking per *expected* table — not "present in any table" — catches a run that
+    died between a sweep's summary append and its records append.
+    """
+    from .verify import expected_rows   # the same independent reader verify uses; no silver code involved
+    present: set[tuple[str, str, str]] = set()
     for t in BRONZE_TABLES:
-        if t == "bronze_ingest_log":
-            continue
         df = load_table(spark, fmt, t)
-        if df is not None:
-            present |= {(r[0], r[1]) for r in df.select("source_file", "source_sha256").distinct().collect()}
-    missing = [e["landed_relpath"] for e in manifest["files"] if (e["landed_relpath"], e["sha256_landed"]) not in present]
+        if df is None:
+            continue
+        cols = ("table", "source_file", "source_sha256") if t == "bronze_ingest_log" else ("source_file", "source_sha256")
+        for r in df.select(*cols).distinct().collect():
+            present.add((r[0], r[1], r[2]) if t == "bronze_ingest_log" else (t, r[0], r[1]))
+    missing = []
+    for e in manifest["files"]:
+        for t in expected_rows(LANDING_DIR / e["landed_relpath"], e["dataset"]):
+            if (t, e["landed_relpath"], e["sha256_landed"]) not in present:
+                missing.append(f"{e['landed_relpath']} → {t}")
     if missing:
-        raise SystemExit(f"silver: {len(missing)} landed file(s) are not in bronze at their current sha256 — run `make bronze` first: "
-                         + ", ".join(missing[:5]) + (" …" if len(missing) > 5 else ""))
+        raise SystemExit(f"silver: {len(missing)} landed file/table pair(s) are not in bronze at the current sha256 — "
+                         f"run `make bronze` first: " + "; ".join(missing[:5]) + (" …" if len(missing) > 5 else ""))
 
 
 def read_seed(spark: SparkSession, name: str, schema: T.StructType) -> DataFrame:
@@ -116,6 +131,11 @@ SEED_RUN_NOTES = T.StructType([
     T.StructField("host_state", T.StringType()), T.StructField("evidence", T.StringType()),
     T.StructField("note", T.StringType()), T.StructField("source", T.StringType()),
 ])
+SEED_OVERRIDES = T.StructType([
+    T.StructField("endpoint_id", T.StringType()), T.StructField("ts_utc", T.StringType()),
+    T.StructField("gpu_label", T.StringType()), T.StructField("evidence", T.StringType()),
+    T.StructField("note", T.StringType()), T.StructField("source", T.StringType()),
+])
 SEED_GPU = T.StructType([
     T.StructField("gpu_label", T.StringType()), T.StructField("tier", T.StringType()),
     T.StructField("gpu_model", T.StringType()), T.StructField("price_per_hr_usd", T.DoubleType()),
@@ -128,6 +148,7 @@ def build_dims(spark: SparkSession) -> dict[str, DataFrame]:
         "dim_coldstart_series": read_seed(spark, "coldstart_series", SEED_SERIES),
         "dim_gpu_label": read_seed(spark, "gpu_labels", SEED_GPU),
         "dim_coldstart_run_notes": read_seed(spark, "coldstart_run_notes", SEED_RUN_NOTES),
+        "dim_coldstart_request_overrides": read_seed(spark, "coldstart_request_overrides", SEED_OVERRIDES),
     }
 
 
@@ -150,7 +171,8 @@ REQUEST_JSON = T.StructType([
 
 REQUEST_COLUMNS = [
     "source", "engine", "engine_build", "series_label", "endpoint_id", "run_index", "request_index", "kind",
-    "request_ts_utc", "model", "gpu_label", "gpu_model", "gpu_tier", "price_per_hr_usd", "flashboot",
+    "request_ts_utc", "model", "gpu_label", "gpu_label_raw", "gpu_label_override_note", "gpu_model", "gpu_tier",
+    "price_per_hr_usd", "flashboot",
     "weights_mode", "http_status", "job_status", "ok", "wall_ms", "delay_ms", "exec_ms", "worker_id",
     "prompt_tokens", "completion_tokens", "is_flashboot_hit", "request_duration_s", "est_cost_usd",
     "host_state", "run_note", "workers_before_json", "error", "source_file", "source_sha256", "bronze_run_label",
@@ -188,7 +210,9 @@ def emberserve_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame
                  "kind",
                  F.to_timestamp(F.col("j.submit_wall")).alias("request_ts_utc"),
                  F.col("series_model").alias("model"),
-                 F.col("gpu_model").alias("gpu_label"), "gpu_model", "gpu_tier", "price_per_hr_usd",
+                 F.col("gpu_model").alias("gpu_label"), F.col("gpu_model").alias("gpu_label_raw"),
+                 F.lit(None).cast("string").alias("gpu_label_override_note"),
+                 "gpu_model", "gpu_tier", "price_per_hr_usd",
                  F.coalesce("flashboot", F.lit("unknown")).alias("flashboot"),
                  "weights_mode",
                  F.col("j.status").alias("http_status"), F.col("j.job_status").alias("job_status"),
@@ -214,8 +238,14 @@ def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) ->
           .where(F.col("_rn") == 1).drop("_rn"))
     gpu = dims["dim_gpu_label"].select(F.col("gpu_label").alias("_gl"), F.col("tier").alias("gpu_tier"),
                                        "gpu_model", "price_per_hr_usd")
+    # A label is what the operator typed on the command line, not what Runpod placed the job on. Where the placement
+    # notes say otherwise for a specific request, the override seed wins and the raw label is kept beside it.
+    ov = dims["dim_coldstart_request_overrides"].select(F.col("endpoint_id").alias("_oe"), F.col("ts_utc").alias("_ot"),
+                                                        F.col("gpu_label").alias("_og"), F.col("note").alias("gpu_label_override_note"))
     is_num = F.col("status").rlike(r"^\d+$")
-    out = (b.join(gpu, F.col("gpu") == F.col("_gl"), "left")
+    out = (b.join(ov, (F.col("endpoint_id") == F.col("_oe")) & (F.col("ts_utc") == F.col("_ot")), "left")
+            .withColumn("_label", F.coalesce(F.col("_og"), F.col("gpu")))
+            .join(gpu, F.col("_label") == F.col("_gl"), "left")
             .select(
                 F.lit("pulse_coldstart").alias("source"),
                 F.lit("worker-vllm").alias("engine"),
@@ -227,9 +257,10 @@ def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) ->
                 "kind",
                 F.to_timestamp("ts_utc").alias("request_ts_utc"),
                 canonical_model(F.col("model")).alias("model"),
-                F.col("gpu").alias("gpu_label"), "gpu_model", "gpu_tier", "price_per_hr_usd",
+                F.col("_label").alias("gpu_label"), F.col("gpu").alias("gpu_label_raw"), "gpu_label_override_note",
+                "gpu_model", "gpu_tier", "price_per_hr_usd",
                 F.lit("unknown").alias("flashboot"),
-                F.when(F.col("gpu").contains("vol"), "volume").otherwise("fetched").alias("weights_mode"),
+                F.when(F.col("_label").contains("vol"), "volume").otherwise("fetched").alias("weights_mode"),
                 F.when(is_num, F.col("status").cast("int")).alias("http_status"),
                 F.when(~is_num, F.col("status")).alias("job_status"),
                 (F.col("status") == "COMPLETED").alias("ok"),
@@ -491,6 +522,7 @@ def main(argv: list[str] | None = None) -> int:
         "dim_coldstart_series": lambda: dims["dim_coldstart_series"],
         "dim_gpu_label": lambda: dims["dim_gpu_label"],
         "dim_coldstart_run_notes": lambda: dims["dim_coldstart_run_notes"],
+        "dim_coldstart_request_overrides": lambda: dims["dim_coldstart_request_overrides"],
         "silver_coldstart_requests": lambda: build_coldstart_requests(spark, args.format, dims),
         "silver_coldstart_phases": lambda: build_coldstart_phases(spark, args.format),
         "silver_sweep_summaries": lambda: build_sweep_summaries(spark, args.format),

@@ -1,0 +1,4 @@
+endpoint_id,ts_utc,gpu_label,evidence,note,source
+4ib59mjp0vgaao,2026-09-23T19:53:07+00:00,48GB-A40-1.22,observed,"run 7 (15:50 EDT): the worker that served this cold request was an A40 on the 48 GB tier; coldstart.py was launched with the stale --gpu 24GBPRO-1.10",seeds/evidence/gpu_per_cycle.txt line "run 7 (15:50) A40 ... 48 GB cold 177.5 s"
+4ib59mjp0vgaao,2026-09-23T19:53:09+00:00,48GB-A40-1.22,observed,"run 7 warm request on the same A40 worker",seeds/evidence/gpu_per_cycle.txt (run 7)
+4ib59mjp0vgaao,2026-09-23T19:53:11+00:00,48GB-A40-1.22,observed,"run 7 warm request on the same A40 worker",seeds/evidence/gpu_per_cycle.txt (run 7)

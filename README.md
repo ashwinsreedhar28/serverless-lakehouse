@@ -166,6 +166,7 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 |---|---|---|---|
 | `dim_coldstart_series` | one emberserve cold-start series | 13 | seed: engine, build, model, GPU, FlashBoot setting (+ how it is known), weights mode |
 | `dim_gpu_label` | one GPU label as the sources spell it | 14 | seed: tier, GPU model where known, $/hr, `evidence` (observed / inferred / unknown) and its source |
+| `dim_coldstart_request_overrides` | one Pulse request whose recorded GPU label was wrong | 3 | seed: run 7's three requests were served by an A40 on the 48 GB tier while `coldstart.py` was launched with `--gpu 24GBPRO-1.10`; silver keeps `gpu_label_raw` beside the corrected label |
 | `dim_coldstart_run_notes` | one (series, run) with a fact the files don't carry | 7 | seed: `host_state` (fresh / warm / partial / FlashBoot resume) with `evidence` (author testimony / file note / author label) and its source; silver defaults every other run to `unknown` |
 | `silver_coldstart_requests` | one Serverless request, cold or warm, from either source | 149 | emberserve `cold_json`/`warm_json` exploded with `from_json`; Pulse CSVs typed; the 15 duplicate rows of `results_v0.csv` ≡ `results_runs1-3.csv` dropped; model names canonicalised; joined to both dims; derived `is_flashboot_hit` (cold ∧ ok ∧ delay < 5 000 ms), `request_duration_s`, `est_cost_usd`; `host_state` from the run-notes seed; `source_sha256` kept on every row |
 | `silver_coldstart_phases` | one (series, run, phase or timeline mark) | 307 | emberserve `phases_s` and `timeline.marks` maps exploded |
@@ -181,7 +182,7 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 |---|---|---|
 | `gold_engine_comparison` | same GPU (RTX 4090), same model (Qwen3-8B): full cold boot p50/mean/min/max, warm delay and exec, $ per cold start — emberserve baked vs fetched vs worker-vllm; `scope=pooled` rows plus one row per `cohort` (fresh host / warm host / partial host / Pulse-era) | 11 |
 | `gold_worker_boot_phases` | worker-vllm's boot anatomy from its own log lines: seconds to weights, `torch.compile`, CUDA-graph capture (+ `graph_mode`), `init engine`, start → API ready, ready → first job; per log file and boot | 15 |
-| `gold_flashboot_hit_rate` | fast cold responses (FlashBoot proxy): share of successful cold-labelled requests answered in under 5 s, per engine × endpoint × FlashBoot setting | 13 |
+| `gold_flashboot_hit_rate` | fast cold responses (FlashBoot proxy): share of successful cold-labelled requests answered in under 5 s, per engine × endpoint × FlashBoot setting | 14 |
 | `gold_coldstart_by_gpu_image` | delay/exec distribution per engine × model × GPU × weights mode × FlashBoot × kind | 30 |
 | `gold_cost_per_job` | request-duration cost proxy `(delay_ms + exec_ms) / 3.6e6 × $/hr` per engine × model × tier × kind, only where the tier price is known; not billed time | 14 |
 | `gold_scoring_cost_per_batch` | $ and seconds per article for the Pulse scoring job, per backend × model | 14 |
@@ -189,10 +190,11 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 
 Headline numbers today (`docs/gold_report.md`), Qwen3-8B on an RTX 4090, **pooled over every full boot**: a cold
 boot is **17 s** with emberserve and baked weights (n=4), **38 s** with emberserve fetching weights at start (n=11),
-and **210 s** with worker-vllm (n=7). The pooled worker-vllm figure mixes three cohorts, which the same table lists
+and **210 s** with worker-vllm (n=6). The pooled worker-vllm figure mixes three cohorts, which the same table lists
 separately: a fresh host that had to pull the image (210 s, n=1), two same-night reruns on a warm host (**147.5 s**
-mean — the pair behind the Sep 30 write-up), and four Sep 23 Pulse-era runs on worker-vllm 2.27 with endpoint
-rollouts (243 s median). Inside a worker-vllm boot, `torch.compile` is 24–65 s and `init engine` 25–140 s;
+mean — the pair behind the Sep 30 write-up), and three Sep 23 Pulse-era runs on worker-vllm 2.27 with endpoint
+rollouts (258 s median). A fourth Sep 23 request (177.5 s) carried the `24GBPRO-1.10` label but the placement
+notes show it ran on an A40, so a per-request override moves it out of the RTX 4090 comparison. Inside a worker-vllm boot, `torch.compile` is 24–65 s and `init engine` 25–140 s;
 CUDA-graph capture is 5–8 s on the RTX 4090 / A100 / H100 boots, 19–20 s for the 32B-AWQ model on an RTX A6000,
 and 75–81 s on the two Sep 23 boots on the 24 GB-tier GPU that was never identified — it tracks GPU and model, not
 vLLM version (nearly every boot captured both FULL and PIECEWISE graphs; `graph_mode` is a column). The two worker
@@ -244,6 +246,10 @@ experiment, so they describe what happened, not an engine-only speed-up.
     of three series that merely share an endpoint with a labelled-off series, and the GPU behind the 24 GB tier.
     The 48 GB tier label was first seeded as A40 from its price; the audit caught that the same price also served
     an RTX A6000, and the worker logs for that endpoint are named `A6000`, so it is now `RTX A6000, inferred`.
+    A label is also not hardware identity per request: `coldstart.py` took `--gpu` from the operator, and run 7
+    was launched with a stale label while Runpod placed it on an A40. `seeds/coldstart_request_overrides.csv`
+    corrects individual requests (keyed by endpoint and timestamp, `observed` evidence only); silver keeps
+    `gpu_label_raw` beside the corrected `gpu_label`.
 13. **"FlashBoot hit" is a proxy: a *successful* cold-labelled request with `delay_ms` < 5 000.** Observed
     resumes are 0.5–0.9 s and the fastest full boot is 12.6 s, so the threshold is not sensitive. Denominator =
     successful cold requests (failures excluded). It cannot distinguish a FlashBoot resume from a worker that was
@@ -275,7 +281,13 @@ wording: silver selected file versions by newest ingest instead of by the manife
 empty replacement); `regexp_extract` returning `""` nulled every load-balancer endpoint id; a Streamlit percent
 format; a Space deployment built on the deprecated Streamlit SDK and the removed `huggingface-cli`; and a cost
 "upper bound" claim the billing model does not support. It also downgraded several seed values from asserted to
-inferred or unknown and caught the A40/A6000 mix-up. The findings are in the git history (commit "Audit fixes").
+inferred or unknown and caught the A40/A6000 mix-up. A second pass on the fixed commit found three more: one
+request whose recorded GPU label did not match its placement (now a per-request override), a private-key
+redaction that removed only the PEM header (now the whole block), and a snapshot guard that accepted a run which
+had written a sweep's summary but not its records (now checked per expected table, with zero-row ingests
+counted through the ledger). It also showed `--force` re-ingests duplicating silver events and renamed files
+lingering in landing; both fixed and covered in `tests/test_snapshot_scenarios.py`. Both reports and the fixes are
+in the git history (commits "Audit fixes" and "Re-audit fixes").
 
 Future work: object-storage landing (read landing files through Spark/`fsspec`), a `dim_date` and date
 partitions before the data grows, bronze schema migration for a JSON scalar that changes type (today the explicit

@@ -150,13 +150,23 @@ def main(argv: list[str] | None = None) -> int:
     manifest_path = landing_dir / MANIFEST_PATH.name
     manifest_path.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
 
+    # landing is a mirror: a file the source no longer has (renamed, deleted) must not linger beside the manifest
+    keep = {e["landed_relpath"] for e in entries} | {manifest_path.name}
+    pruned = 0
+    for p in sorted(landing_dir.rglob("*"), reverse=True):
+        rel = p.relative_to(landing_dir).as_posix()
+        if p.is_file() and rel not in keep:
+            p.unlink(); pruned += 1
+        elif p.is_dir() and not any(p.iterdir()):
+            p.rmdir()
+
     by_ds: dict[str, int] = {}
     for e in entries:
         by_ds[e["dataset"]] = by_ds.get(e["dataset"], 0) + 1
     print(f"landed {len(entries)} files, {manifest['bytes_landed']:,} bytes → {landing_dir}")
     for ds, n in sorted(by_ds.items()):
         print(f"  {ds:<24} {n:>3} files")
-    print(f"  redactions: {manifest['redactions_total']}")
+    print(f"  redactions: {manifest['redactions_total']}" + (f" · pruned {pruned} stale landed file(s)" if pruned else ""))
     for e in entries:
         if e["redactions"]:
             print(f"    {e['landed_relpath']}: {e['redactions']}")

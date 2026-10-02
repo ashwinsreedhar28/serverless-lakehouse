@@ -23,7 +23,9 @@ PATTERNS: list[tuple[str, Pattern[str], str]] = [
     ("github_pat",    re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),              "<redacted:github_pat>"),   # fine-grained PATs
     ("aws_access_key", re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}"),                "<redacted:aws_access_key>"),
     ("slack_token",   re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}"),             "<redacted:slack_token>"),
-    ("private_key",   re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),        "<redacted:private_key>"),
+    # whole PEM block, header to footer; a truncated block (no footer) is redacted to the end of the text
+    ("private_key",   re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "<redacted:private_key>"),
+    ("private_key_truncated", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*"), "<redacted:private_key>"),
     ("jwt",           re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), "<redacted:jwt>"),
     ("bearer",        re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._+/=\-]{20,}"),    "Bearer <redacted:bearer>"),
     # key=value and "key": "value" forms where the key name contains a secret-ish word — including compound names

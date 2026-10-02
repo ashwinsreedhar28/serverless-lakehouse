@@ -53,6 +53,18 @@ def test_more_token_shapes():
         assert tok not in out and hits[name] == 1, name
 
 
+def test_private_key_block_is_removed_entirely():
+    # markers assembled at runtime so this file itself never contains a PEM header for the pre-commit scan to flag
+    dash, begin, end = "-" * 5, "BEGIN RSA PRIVATE KEY", "END RSA PRIVATE KEY"
+    body = "\n".join("MIIE" + "x" * 60 for _ in range(5))
+    pem = f"{dash}{begin}{dash}\n{body}\n{dash}{end}{dash}"
+    out, hits = redact(f"before\n{pem}\nafter")
+    assert hits["private_key"] == 1 and "MIIE" not in out and out.endswith("after") and out.startswith("before")
+    assert find(out) == []
+    out2, hits2 = redact(f"log line\n{dash}BEGIN PRIVATE KEY{dash}\n{body}")     # truncated: no footer
+    assert hits2["private_key_truncated"] == 1 and "MIIE" not in out2
+
+
 def test_find_masks_the_match():
     hits = find(f"token={HF}")
     assert {name for name, _ in hits} == {"hf_token", "kv_secret"}   # both patterns see it; neither leaks it
