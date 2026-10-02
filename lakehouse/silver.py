@@ -80,6 +80,10 @@ SEED_SERIES = T.StructType([
     T.StructField("flashboot_source", T.StringType()), T.StructField("weights_mode", T.StringType()),
     T.StructField("image_gb", T.DoubleType()), T.StructField("notes", T.StringType()),
 ])
+SEED_RUN_NOTES = T.StructType([
+    T.StructField("series_label", T.StringType()), T.StructField("run_index", T.IntegerType()),
+    T.StructField("host_state", T.StringType()), T.StructField("note", T.StringType()), T.StructField("source", T.StringType()),
+])
 SEED_GPU = T.StructType([
     T.StructField("gpu_label", T.StringType()), T.StructField("tier", T.StringType()),
     T.StructField("gpu_model", T.StringType()), T.StructField("price_per_hr_usd", T.DoubleType()),
@@ -91,6 +95,7 @@ def build_dims(spark: SparkSession) -> dict[str, DataFrame]:
     return {
         "dim_coldstart_series": read_seed(spark, "coldstart_series", SEED_SERIES),
         "dim_gpu_label": read_seed(spark, "gpu_labels", SEED_GPU),
+        "dim_coldstart_run_notes": read_seed(spark, "coldstart_run_notes", SEED_RUN_NOTES),
     }
 
 
@@ -116,7 +121,7 @@ REQUEST_COLUMNS = [
     "request_ts_utc", "model", "gpu_label", "gpu_model", "gpu_tier", "price_per_hr_usd", "flashboot",
     "weights_mode", "http_status", "job_status", "ok", "wall_ms", "delay_ms", "exec_ms", "worker_id",
     "prompt_tokens", "completion_tokens", "is_flashboot_hit", "billed_s", "est_cost_usd",
-    "workers_before_json", "error", "source_file", "bronze_run_label",
+    "host_state", "run_note", "workers_before_json", "error", "source_file", "bronze_run_label",
 ]
 
 
@@ -135,9 +140,12 @@ def emberserve_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame
     series = dims["dim_coldstart_series"].select("series_label", "engine", "engine_build",
                                                   F.col("model").alias("series_model"), "gpu_model",
                                                   "flashboot", "weights_mode")
+    notes = dims["dim_coldstart_run_notes"].select(F.col("series_label").alias("_sl"), F.col("run_index").alias("_ri"),
+                                                    F.col("host_state").alias("_hs"), F.col("note").alias("run_note"))
     out = (r.withColumnRenamed("label", "series_label")
              .join(series, "series_label", "left")
              .join(gpu, F.col("gpu_model") == F.col("_gl"), "left")
+             .join(notes, (F.col("series_label") == F.col("_sl")) & (F.col("run_index") == F.col("_ri")), "left")
              .select(
                  F.lit("emberserve_results").alias("source"),
                  F.coalesce("engine", F.lit("emberserve")).alias("engine"),
@@ -157,6 +165,7 @@ def emberserve_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame
                  F.col("j.delay_ms").alias("delay_ms"), F.col("j.execution_ms").alias("exec_ms"),
                  F.col("j.worker_id").alias("worker_id"),
                  F.lit(None).cast("long").alias("prompt_tokens"), F.lit(None).cast("long").alias("completion_tokens"),
+                 F.coalesce(F.col("_hs"), F.lit("unknown")).alias("host_state"), "run_note",
                  F.col("health_before_json").alias("workers_before_json"),
                  F.col("j.error").alias("error"),
                  "source_file", F.col("run_label").alias("bronze_run_label"),
@@ -196,6 +205,7 @@ def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) ->
                 F.col("delay_ms").cast("long").alias("delay_ms"), F.col("exec_ms").cast("long").alias("exec_ms"),
                 F.lit(None).cast("string").alias("worker_id"),
                 F.col("prompt_tokens").cast("long"), F.col("completion_tokens").cast("long"),
+                F.lit("unknown").alias("host_state"), F.lit(None).cast("string").alias("run_note"),
                 F.when(F.col("workers_before") != "", F.col("workers_before")).alias("workers_before_json"),
                 F.when(F.col("error") != "", F.col("error")).alias("error"),
                 "source_file", F.col("run_label").alias("bronze_run_label"),
@@ -440,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     builders = {
         "dim_coldstart_series": lambda: dims["dim_coldstart_series"],
         "dim_gpu_label": lambda: dims["dim_gpu_label"],
+        "dim_coldstart_run_notes": lambda: dims["dim_coldstart_run_notes"],
         "silver_coldstart_requests": lambda: build_coldstart_requests(spark, args.format, dims),
         "silver_coldstart_phases": lambda: build_coldstart_phases(spark, args.format),
         "silver_sweep_summaries": lambda: build_sweep_summaries(spark, args.format),

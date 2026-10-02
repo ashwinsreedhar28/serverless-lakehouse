@@ -140,6 +140,7 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 |---|---|---|---|
 | `dim_coldstart_series` | one emberserve cold-start series | 13 | seed: engine, build, model, GPU, FlashBoot setting (+ how it is known), weights mode |
 | `dim_gpu_label` | one GPU label as the sources spell it | 14 | seed: tier, GPU model where recorded, $/hr with its source |
+| `dim_coldstart_run_notes` | one (series, run) with a fact the files don't carry | 7 | seed: `host_state` (fresh / warm / partial / FlashBoot resume) with its source; silver defaults every other run to `unknown` |
 | `silver_coldstart_requests` | one Serverless request, cold or warm, from either source | 149 | emberserve `cold_json`/`warm_json` exploded with `from_json`; Pulse CSVs typed; the 15 duplicate rows of `results_v0.csv` ≡ `results_runs1-3.csv` dropped; model names canonicalised; joined to both dims; derived `is_flashboot_hit` (cold ∧ ok ∧ delay < 5 000 ms), `billed_s`, `est_cost_usd` |
 | `silver_coldstart_phases` | one (series, run, phase or timeline mark) | 307 | emberserve `phases_s` and `timeline.marks` maps exploded |
 | `silver_sweep_summaries` | one request-rate run of a load sweep | 38 | summary/trace/args/server_latency JSON flattened to columns; `request_rate: null` → `inf` with `is_unbounded`; `endpoint_id` and queue vs load-balancer parsed from the URL |
@@ -152,7 +153,7 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 
 | table | the question it answers | rows |
 |---|---|---|
-| `gold_engine_comparison` | same GPU (RTX 4090), same model (Qwen3-8B): full cold boot p50/min/max, warm delay and exec, $ per cold start — emberserve baked vs fetched vs worker-vllm | 3 |
+| `gold_engine_comparison` | same GPU (RTX 4090), same model (Qwen3-8B): full cold boot p50/mean/min/max, warm delay and exec, $ per cold start — emberserve baked vs fetched vs worker-vllm; `scope=pooled` rows plus one row per `cohort` (fresh host / warm host / partial host / Pulse-era) | 11 |
 | `gold_worker_boot_phases` | worker-vllm's boot anatomy from its own log lines: seconds to weights, `torch.compile`, CUDA-graph capture, `init engine`, start → API ready, ready → first job; per log file and boot | 15 |
 | `gold_flashboot_hit_rate` | share of cold-labelled requests answered in under 5 s, per engine × endpoint × FlashBoot setting | 13 |
 | `gold_coldstart_by_gpu_image` | delay/exec distribution per engine × model × GPU × weights mode × FlashBoot × kind | 30 |
@@ -160,11 +161,14 @@ carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 | `gold_scoring_cost_per_batch` | $ and seconds per article for the Pulse scoring job, per backend × model | 14 |
 | `gold_sweep_latency` | TTFT / e2e / throughput per system × request rate, with per-request p99 where records exist | 38 |
 
-Headline numbers today (`docs/gold_report.md`): a full cold boot of Qwen3-8B on an RTX 4090 is **17 s** with
-emberserve and baked weights, **38 s** with emberserve fetching weights at start, and **210 s** with worker-vllm —
-of which `torch.compile` is 24–65 s, CUDA-graph capture 5–8 s on vLLM 0.30 but 75–81 s on 0.28 (full graphs), and
-`init engine` 25–140 s. The two worker logs with a warm compile cache show `torch.compile` at **1.1–1.3 s** instead
-of 44 s and start → API ready at 97 s instead of 173 s.
+Headline numbers today (`docs/gold_report.md`), Qwen3-8B on an RTX 4090, **pooled over every full boot**: a cold
+boot is **17 s** with emberserve and baked weights (n=4), **38 s** with emberserve fetching weights at start (n=11),
+and **210 s** with worker-vllm (n=7). The pooled worker-vllm figure mixes three cohorts, which the same table lists
+separately: a fresh host that had to pull the image (210 s, n=1), two same-night reruns on a warm host (**147.5 s**
+mean — the pair behind the Sep 30 write-up), and four Sep 23 Pulse-era runs on worker-vllm 2.27 with endpoint
+rollouts (243 s median). Inside a worker-vllm boot, `torch.compile` is 24–65 s, CUDA-graph capture 5–8 s on vLLM
+0.30 but 75–81 s on 0.28 (full graphs), and `init engine` 25–140 s. The two worker logs with a warm compile cache
+show `torch.compile` at **1.1–1.3 s** instead of 44 s and start → API ready at 97 s instead of 173 s.
 
 ## Decisions
 
@@ -212,6 +216,12 @@ of 44 s and start → API ready at 97 s instead of 173 s.
 16. **Fresh-host rows stay in the distributions.** `*_fresh_host` series include the image pull on a host that
     has never run the image (328 s for the 27 GB baked image). They are real cold starts a user can hit; the
     series dimension marks them so a view can exclude them.
+17. **A pooled median is labelled pooled, and its cohorts sit next to it.** `gold_engine_comparison` carries
+    `scope` (`pooled` | `cohort`) and `cohort` (host state from the run-notes seed, else data era). The pooled
+    worker-vllm 210 s and the 147.5 s in an earlier write-up are both right and cover different runs; a table
+    that shows only one of them reads as a contradiction to anyone holding the other. Host state is a per-run
+    fact that neither the files nor the series carry, so it lives in `seeds/coldstart_run_notes.csv` with a
+    source per row; runs without a row are `unknown`, never guessed.
 
 ## Secrets
 

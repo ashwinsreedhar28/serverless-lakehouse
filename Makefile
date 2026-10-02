@@ -7,7 +7,8 @@
 #   make silver                    bronze + seeds/ → typed, parsed, deduped silver tables (rebuilt in full)
 #   make gold                      silver → the aggregate tables the dashboard reads (rebuilt in full)
 #   make report                    render gold to docs/gold_report.md
-#   make all                       bronze → verify → silver → gold → report
+#   make dashboard                 render gold to docs/dashboard.html (static, self-contained)
+#   make all                       bronze → verify → silver → gold → report → dashboard
 #   make show                      row counts, run_labels and source files per bronze table
 #   make check-secrets             scan tracked + staged files for credentials (also runs in the pre-commit hook)
 #   make hooks                     point git at .githooks/ so check-secrets runs on every commit
@@ -39,7 +40,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify silver gold report all show check-secrets hooks test clean java-check
+.PHONY: setup land bronze verify silver gold report dashboard all show check-secrets hooks test clean java-check
 
 setup: $(VENV)/.installed java-check
 
@@ -77,7 +78,10 @@ gold: $(VENV)/.installed java-check
 report: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.report --format $(FORMAT)
 
-all: bronze verify silver gold report
+dashboard: $(VENV)/.installed java-check
+	$(PYTHON) -m lakehouse.dashboard --format $(FORMAT)
+
+all: bronze verify silver gold report dashboard
 
 show: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.show --format $(FORMAT)

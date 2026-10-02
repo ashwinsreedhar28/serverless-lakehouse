@@ -20,9 +20,11 @@ from .spark import get_spark
 VIEWS = {
     "gold_engine_comparison": (
         "emberserve vs worker-vllm — Qwen3-8B on an RTX 4090",
-        "Same GPU, same model: what does a full cold boot cost with each engine, and what does warm look like?",
-        ["engine", "weights_mode", "n_full_boots", "cold_delay_ms_p50", "cold_delay_ms_min", "cold_delay_ms_max",
-         "cold_est_cost_usd_p50", "n_warm", "warm_delay_ms_p50", "warm_exec_ms_p50"]),
+        "Same GPU, same model. `scope=pooled` rows mix every full boot of that engine; the `cohort` rows beneath split "
+        "them by host state and data era — quote a pooled median only as pooled. The two warm-host worker-vllm samples "
+        "are the pair behind the 147.5 s in the Sep 30 write-up.",
+        ["engine", "weights_mode", "scope", "cohort", "n_full_boots", "cold_delay_ms_p50", "cold_delay_ms_mean",
+         "cold_delay_ms_min", "cold_delay_ms_max", "cold_est_cost_usd_p50", "n_warm", "warm_exec_ms_p50", "dates"]),
     "gold_worker_boot_phases": (
         "worker-vllm boot anatomy, per worker log",
         "Where do the seconds go between `vllm serve` and 'Application startup complete'?",

@@ -75,22 +75,44 @@ def flashboot_hit_rate(req: DataFrame) -> DataFrame:
 
 
 def engine_comparison(req: DataFrame) -> DataFrame:
-    """Same GPU, same model: what does each engine cost you on a cold start, and what does warm look like?"""
-    same = req.where("ok and model = 'Qwen3-8B' and gpu_model = 'RTX 4090'")
+    """Same GPU, same model: what does each engine cost you on a cold start, and what does warm look like?
+
+    Two kinds of row, told apart by `scope`: `pooled` aggregates every full boot of that engine × weights mode;
+    one row per `cohort` splits them by host state and data era, because a pooled median mixes a fresh host that
+    had to pull the image, same-night reruns on a warm host, and the Sep 23 Pulse-era runs (worker-vllm 2.27 with
+    endpoint rollouts). Quote the pooled number only with the word pooled; the cohort rows reproduce the figures in
+    earlier write-ups (the two warm-host worker-vllm samples average 147.5 s).
+    """
+    same = (req.where("ok and model = 'Qwen3-8B' and gpu_model = 'RTX 4090'")
+               .withColumn("cohort", F.when(F.col("host_state") != "unknown", F.col("host_state"))
+                                      .when(F.col("source") == "pulse_coldstart", "pulse_sep23_host_unknown")
+                                      .otherwise("host_unknown")))
     cold_full = same.where("kind = 'cold' and not coalesce(is_flashboot_hit, false)")
     warm = same.where("kind = 'warm'")
-    c = (cold_full.groupBy("engine", "weights_mode")
-                  .agg(F.count("*").alias("n_full_boots"),
-                       pct("delay_ms", 0.5, "cold_delay_ms_p50"), F.min("delay_ms").alias("cold_delay_ms_min"),
-                       F.max("delay_ms").alias("cold_delay_ms_max"), pct("exec_ms", 0.5, "cold_exec_ms_p50"),
-                       pct("est_cost_usd", 0.5, "cold_est_cost_usd_p50"),
-                       F.collect_set("series_label").alias("series")))
-    w = (warm.groupBy("engine", "weights_mode")
-             .agg(F.count("*").alias("n_warm"), pct("delay_ms", 0.5, "warm_delay_ms_p50"),
-                  pct("exec_ms", 0.5, "warm_exec_ms_p50")))
-    return (c.join(w, ["engine", "weights_mode"], "full")
-             .withColumn("series", F.array_sort("series"))
-             .orderBy("engine", "weights_mode"))
+
+    def agg(df_cold, df_warm, keys, scope):
+        c = (df_cold.groupBy(*keys)
+                    .agg(F.count("*").alias("n_full_boots"),
+                         pct("delay_ms", 0.5, "cold_delay_ms_p50"), F.round(F.avg("delay_ms")).cast("long").alias("cold_delay_ms_mean"),
+                         F.min("delay_ms").alias("cold_delay_ms_min"), F.max("delay_ms").alias("cold_delay_ms_max"),
+                         pct("exec_ms", 0.5, "cold_exec_ms_p50"), pct("est_cost_usd", 0.5, "cold_est_cost_usd_p50"),
+                         F.array_sort(F.collect_set("series_label")).alias("series"),
+                         F.array_sort(F.collect_set(F.date_format("request_ts_utc", "yyyy-MM-dd"))).alias("dates")))
+        w = (df_warm.groupBy(*keys)
+                    .agg(F.count("*").alias("n_warm"), pct("delay_ms", 0.5, "warm_delay_ms_p50"), pct("exec_ms", 0.5, "warm_exec_ms_p50")))
+        out = c.join(w, keys, "full").withColumn("scope", F.lit(scope))
+        if "cohort" not in keys:
+            out = out.withColumn("cohort", F.lit("all runs (pooled)"))
+        return out
+
+    pooled = agg(cold_full, warm, ["engine", "weights_mode"], "pooled")
+    cohorts = agg(cold_full, warm, ["engine", "weights_mode", "cohort"], "cohort")
+    cols = ["engine", "weights_mode", "scope", "cohort", "n_full_boots", "cold_delay_ms_p50", "cold_delay_ms_mean",
+            "cold_delay_ms_min", "cold_delay_ms_max", "cold_exec_ms_p50", "cold_est_cost_usd_p50", "n_warm",
+            "warm_delay_ms_p50", "warm_exec_ms_p50", "series", "dates"]
+    return (pooled.select(*cols).unionByName(cohorts.select(*cols))
+                  .where(F.col("n_full_boots").isNotNull())   # a cohort with only warm requests says nothing about cold boots
+                  .orderBy("engine", "weights_mode", F.when(F.col("scope") == "pooled", 0).otherwise(1), "cohort"))
 
 
 def worker_boot_phases(ev: DataFrame) -> DataFrame:
@@ -143,6 +165,15 @@ def worker_boot_phases(ev: DataFrame) -> DataFrame:
                     "n_progress_lines", "n_lines")
             .orderBy("source_file", "boot_index"))
     return out
+
+
+def coldstart_events(req: DataFrame) -> DataFrame:
+    """Event-level projection for the dashboard's dot plot: every successful cold request, one row."""
+    return (req.where("ok and kind = 'cold'")
+               .select("source", "engine", "model", F.coalesce("gpu_model", F.lit("not captured")).alias("gpu_model"),
+                       "gpu_tier", "weights_mode", "flashboot", "host_state", "series_label", "endpoint_id", "run_index",
+                       "request_ts_utc", "delay_ms", "exec_ms", "worker_id", "is_flashboot_hit", "est_cost_usd", "source_file")
+               .orderBy("engine", "weights_mode", "delay_ms"))
 
 
 def cost_per_job(req: DataFrame) -> DataFrame:
@@ -203,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         "gold_cost_per_job": lambda: cost_per_job(req),
         "gold_scoring_cost_per_batch": lambda: scoring_cost_per_batch(L("silver_scoring_batches"), L("silver_scoring_requests")),
         "gold_sweep_latency": lambda: sweep_latency(L("silver_sweep_summaries"), L("silver_sweep_requests")),
+        "gold_coldstart_events": lambda: coldstart_events(req),
     }
     print(f"gold format={args.format} built_at={BUILT_AT.isoformat()}")
     for name in GOLD_TABLES:

@@ -47,6 +47,7 @@ BRONZE_TABLES = (
 SILVER_TABLES = (
     "dim_coldstart_series",         # seed: one cold-start series → engine, model, GPU, FlashBoot, weights mode
     "dim_gpu_label",                # seed: one Pulse/emberserve GPU label → tier, GPU model, $/hr
+    "dim_coldstart_run_notes",      # seed: per-run facts (host state) that neither the files nor the series carry
     "silver_coldstart_requests",    # one Serverless request (cold or warm) from either source, typed, deduped
     "silver_coldstart_phases",      # one (series, run, phase) from emberserve's startup timeline
     "silver_sweep_summaries",       # one request-rate run of a load sweep, typed
@@ -64,6 +65,7 @@ GOLD_TABLES = (
     "gold_cost_per_job",            # estimated $ per Serverless request, per engine × model × GPU × kind
     "gold_scoring_cost_per_batch",  # $ and wall time per 50-article scoring batch, per backend × model
     "gold_sweep_latency",           # ttft/e2e/throughput per system × request rate
+    "gold_coldstart_events",        # one ok cold request, for the dashboard's distribution plot (projection of silver)
 )
 
 

@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--ARTIFACT-START-->
+<title>serverless-lakehouse Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a KPI strip, then one chart card per question, each with its legend above and a table view below.
+   Series colours are the validated reference categorical palette (blue, orange, aqua, yellow, magenta). */
+:root {
+  --bg: #f5f7f9; --surface: #ffffff; --fg: #1b2128; --muted: #5b6672; --faint: #8b95a0; --line: #d9dee4; --grid: #e7ebef;
+  --accent: #0e6b6b; --code-bg: #eef1f4;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #14181d; --surface: #1b2128; --fg: #e6eaee; --muted: #9aa5b1; --faint: #6f7a86; --line: #2c343d; --grid: #242b33;
+  --accent: #5ec4c4; --code-bg: #232a32;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #3fa83f; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #14181d; --surface: #1b2128; --fg: #e6eaee; --muted: #9aa5b1; --faint: #6f7a86; --line: #2c343d; --grid: #242b33;
+  --accent: #5ec4c4; --code-bg: #232a32;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #3fa83f; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 2rem 4rem; padding-inline: 16px; }
+@media (min-width: 720px) { .wrap { padding-inline: 24px; } }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(1.7rem, 3.5vw, 2.4rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.2rem; font-weight: 700; }
+.eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.meta { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); margin-top: 0.5rem; }
+.lede { color: var(--muted); max-width: 70ch; margin: 0.6rem 0 0; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.75rem; margin: 1.5rem 0 2rem; }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 0.9rem 1rem; min-width: 0; }
+.kpi .label { font-size: 0.8rem; color: var(--muted); }
+.kpi .value { font-family: var(--body); font-weight: 600; font-size: 1.9rem; line-height: 1.1; margin-top: 0.25rem; }
+.kpi .value small { font-size: 0.95rem; font-weight: 400; color: var(--muted); margin-left: 0.15rem; }
+.kpi .sub { font-size: 0.78rem; color: var(--faint); margin-top: 0.3rem; font-variant-numeric: tabular-nums; }
+.kpi.b .value { color: var(--s1); } .kpi.o .value { color: var(--s2); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.25rem 1rem; margin: 1rem 0; min-width: 0; }
+.card header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+.card .q { color: var(--muted); font-size: 0.92rem; margin: 0.25rem 0 0; max-width: 78ch; }
+.card .src { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); white-space: nowrap; }
+.legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin: 0.9rem 0 0.25rem; font-size: 0.82rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.legend i.ring { border-radius: 50%; background: transparent !important; border: 2px solid var(--fg); width: 8px; height: 8px; }
+.legend i.tick { width: 2px; height: 12px; border-radius: 0; background: var(--fg); }
+.chart { width: 100%; overflow-x: auto; }
+.chart svg { display: block; width: 100%; height: auto; font-family: var(--body); }
+.chart text { fill: var(--muted); font-size: 12px; }
+.chart text.val { fill: var(--fg); font-variant-numeric: tabular-nums; }
+.chart text.lane { fill: var(--fg); font-weight: 600; }
+.chart .grid line { stroke: var(--grid); stroke-width: 1; }
+.chart .axis line { stroke: var(--line); stroke-width: 1; }
+.chart .hit { stroke: var(--fg); stroke-width: 1.5; }
+.chart .tag { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
+.chart .lineplot { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .crosshair { stroke: var(--line); stroke-width: 1; }
+.chart .hot { cursor: pointer; }
+details.tbl { margin-top: 0.75rem; }
+details.tbl summary { cursor: pointer; font-size: 0.85rem; color: var(--accent); }
+.tblwrap { overflow-x: auto; margin-top: 0.5rem; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+th, td { text-align: left; padding: 0.4rem 0.55rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td .bar { display: inline-block; height: 8px; background: var(--s1); border-radius: 4px; vertical-align: middle; margin-right: 0.4rem; }
+.two { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+@media (min-width: 900px) { .two { grid-template-columns: 1fr 1fr; } }
+.note { font-size: 0.82rem; color: var(--muted); margin: 0.6rem 0 0; }
+#tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.8rem; line-height: 1.35; padding: 0.45rem 0.6rem; border-radius: 6px; max-width: 320px; z-index: 10; opacity: 0; transition: opacity 0.1s; font-variant-numeric: tabular-nums; }
+#tip b { font-weight: 600; }
+footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { #tip { transition: none; } }
+</style>
+
+<div class="wrap">
+<span class="eyebrow">gold layer · Runpod Serverless benchmarks</span>
+<h1>serverless-lakehouse Dashboard</h1>
+<p class="lede">What my own Serverless runs say about cold starts, FlashBoot, cost per job, and how emberserve compares with worker-vllm on the same GPU. Every number below is a row in a gold table, and every gold row traces back to a landed source file.</p>
+<p class="meta" id="meta"></p>
+
+<div class="kpis" id="kpis"></div>
+
+<section class="card" id="c-cold">
+  <header><div><h2>Every cold start, by engine and where the weights came from</h2>
+  <p class="q">One dot per successful cold-labelled request. Hollow dots were answered in under <span id="thr"></span> s: a FlashBoot resume or a worker that was still warm. The tick is the lane's median.</p></div>
+  <span class="src">gold_coldstart_events</span></header>
+  <div class="legend" id="lg-cold"></div>
+  <div class="chart" id="ch-cold"></div>
+  <details class="tbl"><summary>Table view</summary><div class="tblwrap" id="tb-cold"></div></details>
+</section>
+
+<section class="card" id="c-boot">
+  <header><div><h2>Where worker-vllm's boot seconds go</h2>
+  <p class="q">From vLLM's own log lines: weights downloaded and loaded, <code>torch.compile</code>, CUDA-graph capture, the rest of engine init, then the API server coming up. One bar per boot, sorted by total. Two boots hit a warm compile cache.</p></div>
+  <span class="src">gold_worker_boot_phases</span></header>
+  <div class="legend" id="lg-boot"></div>
+  <div class="chart" id="ch-boot"></div>
+  <details class="tbl"><summary>Table view</summary><div class="tblwrap" id="tb-boot"></div></details>
+</section>
+
+<div class="two">
+<section class="card" id="c-engine">
+  <header><div><h2>Same GPU, same model: the engines side by side</h2>
+  <p class="q">Qwen3-8B on an RTX 4090, full boots only (FlashBoot hits excluded). <b>pooled</b> rows mix every run; the cohort rows beneath split them by host state and data era, so a pooled median is never quoted alone.</p></div>
+  <span class="src">gold_engine_comparison</span></header>
+  <div class="tblwrap" id="tb-engine"></div>
+</section>
+<section class="card" id="c-fb">
+  <header><div><h2>FlashBoot hit rate</h2>
+  <p class="q">Share of cold-labelled requests answered under the threshold, per endpoint and setting.</p></div>
+  <span class="src">gold_flashboot_hit_rate</span></header>
+  <div class="tblwrap" id="tb-fb"></div>
+</section>
+</div>
+
+<div class="two">
+<section class="card" id="c-cost">
+  <header><div><h2>$ per cold start</h2>
+  <p class="q">Median of (delay + exec) × $/hr, Qwen3-8B on an RTX 4090 at $1.10/hr. An upper bound: queue time before a worker exists is included.</p></div>
+  <span class="src">gold_engine_comparison</span></header>
+  <div class="chart" id="ch-cost"></div>
+</section>
+<section class="card" id="c-score">
+  <header><div><h2>$ per 1,000 scored articles</h2>
+  <p class="q">The Pulse scoring job, 50 articles per batch, cost from each backend's own price table.</p></div>
+  <span class="src">gold_scoring_cost_per_batch</span></header>
+  <div class="chart" id="ch-score"></div>
+  <p class="note" id="score-note"></p>
+</section>
+</div>
+
+<section class="card" id="c-sweep">
+  <header><div><h2>Time to first token under load</h2>
+  <p class="q">Median TTFT per request rate for each emberserve Serverless sweep. <code>∞</code> means all 200 requests were sent at once. Queue endpoints add a hop and a worker pool; the load-balancer endpoint talks to the server directly.</p></div>
+  <span class="src">gold_sweep_latency</span></header>
+  <div class="legend" id="lg-sweep"></div>
+  <div class="chart" id="ch-sweep"></div>
+  <details class="tbl"><summary>Table view</summary><div class="tblwrap" id="tb-sweep"></div></details>
+</section>
+
+<footer>
+  <p>Built by <code>make dashboard</code> from the gold tables under <code>data/lakehouse/gold/</code>. The same tables are rendered as markdown in <code>docs/gold_report.md</code>; the method, schemas and sixteen design decisions are in the <a href="https://github.com/ashwinsreedhar28/serverless-lakehouse">README</a>. Costs are estimates with the formula stated; FlashBoot hits are defined by a threshold, not by Runpod's own accounting.</p>
+</footer>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script>
+const GOLD = /*GOLD_JSON*/null;
+(function () {
+  if (!GOLD) { document.getElementById("meta").textContent = "No data embedded: run `make dashboard`."; return; }
+  const $ = (id) => document.getElementById(id);
+  const fmt = {
+    s: (ms) => ms == null ? "–" : ms < 1000 ? (ms / 1000).toFixed(2) + " s" : ms < 100000 ? (ms / 1000).toFixed(1) + " s" : Math.round(ms / 1000) + " s",
+    sec: (s) => s == null ? "–" : s < 10 ? s.toFixed(1) + " s" : Math.round(s) + " s",
+    usd: (v) => v == null ? "–" : "$" + (v < 0.01 ? v.toFixed(4) : v < 1 ? v.toFixed(3) : v.toFixed(2)),
+    pct: (v) => v == null ? "–" : Math.round(v * 100) + "%",
+    int: (v) => v == null ? "–" : Number(v).toLocaleString("en-US"),
+    date: (iso) => iso ? iso.slice(0, 10) : "–",
+  };
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const SERIES = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)"];
+  const ENGINE_COLOR = { "emberserve": "var(--s1)", "worker-vllm": "var(--s2)" };
+
+  // ---- tooltip -------------------------------------------------------------------------------------
+  const tip = $("tip");
+  function bindTips(root) {
+    root.querySelectorAll("[data-tip]").forEach((el) => {
+      el.addEventListener("mouseenter", (e) => { tip.innerHTML = el.getAttribute("data-tip"); tip.style.opacity = 1; move(e); });
+      el.addEventListener("mousemove", move);
+      el.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
+    });
+  }
+  function move(e) {
+    const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = e.clientX + pad, y = e.clientY + pad;
+    if (x + w > window.innerWidth - 8) x = e.clientX - w - pad;
+    if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  }
+  function legend(el, items) {
+    el.innerHTML = items.map((it) => `<span><i class="${it.cls || ""}" style="background:${it.color || "transparent"}"></i>${esc(it.label)}</span>`).join("");
+  }
+  function table(el, cols, rows) {
+    const head = cols.map((c) => `<th class="${c.num ? "num" : ""}">${esc(c.h)}</th>`).join("");
+    const body = rows.map((r) => "<tr>" + cols.map((c) => `<td class="${c.num ? "num" : ""}">${c.f ? c.f(r) : esc(r[c.k])}</td>`).join("") + "</tr>").join("");
+    el.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+  const median = (a) => { const s = a.filter((x) => x != null).sort((p, q) => p - q); if (!s.length) return null; const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+  // ---- data ------------------------------------------------------------------------------------------
+  const M = GOLD.meta, EV = GOLD.gold_coldstart_events, BOOT = GOLD.gold_worker_boot_phases, ENG = GOLD.gold_engine_comparison,
+        FB = GOLD.gold_flashboot_hit_rate, SC = GOLD.gold_scoring_cost_per_batch, SW = GOLD.gold_sweep_latency;
+  $("meta").textContent = `built ${M.built_at_utc} · ${M.repo} · ${EV.length} cold starts · ${BOOT.length} worker boots · ${SW.length} sweep runs`;
+  $("thr").textContent = (M.flashboot_hit_ms / 1000).toFixed(0);
+
+  // ---- KPIs ------------------------------------------------------------------------------------------
+  const eng = (e, w, cohort) => ENG.find((r) => r.engine === e && r.weights_mode === w && (cohort ? r.cohort === cohort : r.scope === "pooled")) || {};
+  const warmHost = eng("worker-vllm", "fetched", "warm_host");
+  const hits = EV.filter((r) => r.is_flashboot_hit).length;
+  const cache = BOOT.filter((r) => r.torch_compile_s != null && r.torch_compile_s < 5);
+  const noCache = BOOT.filter((r) => r.torch_compile_s != null && r.torch_compile_s >= 5);
+  const kpis = [
+    { cls: "b", label: "Full cold boot · emberserve, weights baked (pooled)", value: fmt.s(eng("emberserve", "baked").cold_delay_ms_p50), sub: `pooled p50 of ${eng("emberserve", "baked").n_full_boots} boots · Qwen3-8B · RTX 4090` },
+    { cls: "b", label: "Full cold boot · emberserve, weights fetched (pooled)", value: fmt.s(eng("emberserve", "fetched").cold_delay_ms_p50), sub: `pooled p50 of ${eng("emberserve", "fetched").n_full_boots} boots` },
+    { cls: "o", label: "Full cold boot · worker-vllm, weights fetched (pooled)", value: fmt.s(eng("worker-vllm", "fetched").cold_delay_ms_p50), sub: `pooled p50 of ${eng("worker-vllm", "fetched").n_full_boots} boots across two eras · warm-host reruns alone: ${fmt.s(warmHost.cold_delay_ms_mean)} mean of ${warmHost.n_full_boots}` },
+    { cls: "", label: "FlashBoot hits", value: `${hits}<small>of ${EV.length} cold starts</small>`, sub: `answered under ${M.flashboot_hit_ms / 1000} s · hit p50 ${fmt.s(median(EV.filter((r) => r.is_flashboot_hit).map((r) => r.delay_ms)))}` },
+    { cls: "", label: "torch.compile with a warm cache", value: `${fmt.sec(median(cache.map((r) => r.torch_compile_s)))}<small>vs ${fmt.sec(median(noCache.map((r) => r.torch_compile_s)))}</small>`, sub: `${cache.length} cache-hit boots vs ${noCache.length} cold compiles` },
+  ];
+  $("kpis").innerHTML = kpis.map((k) => `<div class="kpi ${k.cls}"><div class="label">${esc(k.label)}</div><div class="value">${k.value}</div><div class="sub">${esc(k.sub)}</div></div>`).join("");
+
+  // ---- chart 1: cold-start dot plot --------------------------------------------------------------------
+  (function () {
+    const laneKey = (r) => `${r.engine} · ${r.weights_mode}`;
+    const laneOrder = ["emberserve · baked", "emberserve · fetched", "worker-vllm · fetched", "worker-vllm · volume"];
+    const lanes = laneOrder.filter((l) => EV.some((r) => laneKey(r) === l)).concat([...new Set(EV.map(laneKey))].filter((l) => !laneOrder.includes(l)));
+    const W = 920, L = 190, R = 24, T = 18, rowH = 44, H = T + lanes.length * rowH + 40;
+    const xs = EV.map((r) => r.delay_ms).filter((v) => v > 0);
+    const lo = Math.log10(Math.min(...xs) * 0.8), hi = Math.log10(Math.max(...xs) * 1.3);
+    const x = (ms) => L + (Math.log10(ms) - lo) / (hi - lo) * (W - L - R);
+    const ticks = [500, 1000, 5000, 10000, 30000, 60000, 120000, 300000, 600000].filter((t) => Math.log10(t) > lo && Math.log10(t) < hi);
+    let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cold-start delay per request, by engine and weights mode, log scale">`;
+    g += `<g class="grid">` + ticks.map((t) => `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - 36}"/>`).join("") + `</g>`;
+    g += ticks.map((t) => `<text x="${x(t)}" y="${H - 18}" text-anchor="middle">${t < 60000 ? t / 1000 + " s" : t / 60000 + " min"}</text>`).join("");
+    g += `<text x="${W - R}" y="${H - 2}" text-anchor="end">delay before the job ran (log scale)</text>`;
+    // deterministic jitter so overlapping dots separate without implying a value
+    const jit = (i) => ((i * 7919) % 13 - 6) * 1.6;
+    lanes.forEach((lane, li) => {
+      const y = T + li * rowH + rowH / 2;
+      const rows = EV.filter((r) => laneKey(r) === lane);
+      const med = median(rows.map((r) => r.delay_ms));
+      g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${y + rowH / 2}" y2="${y + rowH / 2}" stroke="var(--grid)"/>`;
+      g += `<text class="lane" x="${L - 12}" y="${y - 4}" text-anchor="end">${esc(lane)}</text><text x="${L - 12}" y="${y + 12}" text-anchor="end">n=${rows.length} · p50 ${fmt.s(med)}</text>`;
+      if (med) g += `<line x1="${x(med)}" x2="${x(med)}" y1="${y - 14}" y2="${y + 14}" stroke="var(--fg)" stroke-width="2"/>`;
+      rows.forEach((r, i) => {
+        const cx = x(r.delay_ms), cy = y + jit(i), col = ENGINE_COLOR[r.engine] || SERIES[2];
+        const t = `<b>${esc(r.series_label || r.endpoint_id)}</b><br>${esc(r.model)} · ${esc(r.gpu_model)} · ${esc(r.weights_mode)}<br>delay ${fmt.s(r.delay_ms)} · exec ${fmt.s(r.exec_ms)}${r.is_flashboot_hit ? " · <b>FlashBoot hit</b>" : ""}<br>${fmt.date(r.request_ts_utc)} · worker ${esc(r.worker_id || "–")} · ${fmt.usd(r.est_cost_usd)}`;
+        g += r.is_flashboot_hit
+          ? `<circle class="hit" cx="${cx}" cy="${cy}" r="4.5" fill="var(--surface)" stroke="${col}"/>`
+          : `<circle cx="${cx}" cy="${cy}" r="4.5" fill="${col}" stroke="var(--surface)" stroke-width="1.5"/>`;
+        g += `<circle class="hot" cx="${cx}" cy="${cy}" r="9" fill="transparent" data-tip="${esc(t)}"/>`;
+      });
+    });
+    g += `</svg>`;
+    $("ch-cold").innerHTML = g; bindTips($("ch-cold"));
+    legend($("lg-cold"), [{ color: ENGINE_COLOR.emberserve, label: "emberserve" }, { color: ENGINE_COLOR["worker-vllm"], label: "worker-vllm" }, { cls: "ring", label: "FlashBoot hit (under threshold)" }, { cls: "tick", label: "lane median" }]);
+    table($("tb-cold"), [
+      { h: "engine", k: "engine" }, { h: "weights", k: "weights_mode" }, { h: "model", k: "model" }, { h: "gpu", k: "gpu_model" },
+      { h: "series / endpoint", f: (r) => esc(r.series_label || r.endpoint_id) }, { h: "date", f: (r) => fmt.date(r.request_ts_utc) },
+      { h: "delay", num: true, f: (r) => fmt.s(r.delay_ms) }, { h: "exec", num: true, f: (r) => fmt.s(r.exec_ms) },
+      { h: "hit", f: (r) => r.is_flashboot_hit ? "yes" : "" }, { h: "est. cost", num: true, f: (r) => fmt.usd(r.est_cost_usd) },
+    ], EV);
+  })();
+
+  // ---- chart 2: boot anatomy stacked bars ---------------------------------------------------------------
+  (function () {
+    const PH = [
+      { k: "weights", label: "download + load weights", color: SERIES[0] },
+      { k: "compile", label: "torch.compile", color: SERIES[1] },
+      { k: "graphs", label: "CUDA-graph capture", color: SERIES[2] },
+      { k: "init", label: "rest of engine init", color: SERIES[3] },
+      { k: "ready", label: "to 'startup complete'", color: SERIES[4] },
+    ];
+    const rows = BOOT.filter((r) => r.start_to_api_ready_s != null && r.start_to_weights_s != null).map((r) => {
+      const compile = r.torch_compile_s || 0, graphs = r.graph_capture_s || 0, init = Math.max(0, (r.init_engine_s || 0) - compile - graphs);
+      const ready = Math.max(0, r.start_to_api_ready_s - r.start_to_weights_s - (r.init_engine_s || 0));
+      return { ...r, seg: { weights: r.start_to_weights_s, compile, graphs, init, ready }, total: r.start_to_api_ready_s,
+               name: r.source_file.replace(/^.*\//, "").replace(/\.(log|txt)$/, "").replace(/_worker(_log)?/, "").replace(/^serverless_coldstart_/, "").replace(/^endpoint_logs_1450-1553_/, "") + (r.boot_index > 1 ? ` · boot ${r.boot_index}` : "") };
+    }).sort((a, b) => b.total - a.total);
+    const W = 920, L = 300, R = 150, T = 10, rowH = 30, H = T + rows.length * rowH + 40, maxT = Math.max(...rows.map((r) => r.total)) * 1.02;
+    const x = (s) => L + s / maxT * (W - L - R);
+    const ticks = [0, 60, 120, 180, 240].filter((t) => t <= maxT);
+    let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="worker-vllm boot phases per worker log, stacked">`;
+    g += `<g class="grid">` + ticks.map((t) => `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - 34}"/>`).join("") + `</g>`;
+    g += ticks.map((t) => `<text x="${x(t)}" y="${H - 16}" text-anchor="middle">${t} s</text>`).join("");
+    rows.forEach((r, i) => {
+      const y = T + i * rowH + 5, h = rowH - 10;
+      g += `<text x="${L - 10}" y="${y + h / 2 + 4}" text-anchor="end" class="${r.torch_compile_s < 5 ? "lane" : ""}">${esc(r.name)}</text>`;
+      let acc = 0;
+      PH.forEach((p) => {
+        const v = r.seg[p.k]; if (!v) return;
+        const x0 = x(acc), x1 = x(acc + v); acc += v;
+        const t = `<b>${esc(r.name)}</b> · vLLM ${esc(r.vllm_version || "?")}<br>${p.label}: ${fmt.sec(v)}<br>total to API ready ${fmt.sec(r.total)} · first job +${fmt.sec(r.api_ready_to_first_job_s)}`;
+        g += `<rect class="hot" x="${x0}" y="${y}" width="${Math.max(0, x1 - x0 - 2)}" height="${h}" fill="${p.color}" rx="2" data-tip="${esc(t)}"/>`;
+      });
+      g += `<text class="val" x="${x(r.total) + 6}" y="${y + h / 2 + 4}">${Math.round(r.total)} s${r.torch_compile_s < 5 ? "  · compile cache hit" : ""}</text>`;
+    });
+    g += `</svg>`;
+    $("ch-boot").innerHTML = g; bindTips($("ch-boot"));
+    legend($("lg-boot"), PH.map((p) => ({ color: p.color, label: p.label })));
+    table($("tb-boot"), [
+      { h: "log", f: (r) => esc(r.source_file.replace(/^.*\//, "")) }, { h: "boot", k: "boot_index", num: true }, { h: "vllm", k: "vllm_version" },
+      { h: "→ weights", num: true, f: (r) => fmt.sec(r.start_to_weights_s) }, { h: "compile", num: true, f: (r) => fmt.sec(r.torch_compile_s) },
+      { h: "graphs", num: true, f: (r) => fmt.sec(r.graph_capture_s) }, { h: "init engine", num: true, f: (r) => fmt.sec(r.init_engine_s) },
+      { h: "→ API ready", num: true, f: (r) => fmt.sec(r.start_to_api_ready_s) }, { h: "→ first job", num: true, f: (r) => fmt.sec(r.api_ready_to_first_job_s) },
+      { h: "KV cache", num: true, f: (r) => r.kv_cache_gib == null ? "–" : r.kv_cache_gib.toFixed(1) + " GiB" },
+    ], BOOT);
+  })();
+
+  // ---- tables: engine comparison, FlashBoot ---------------------------------------------------------------
+  table($("tb-engine"), [
+    { h: "engine", f: (r) => r.scope === "pooled" ? `<b>${esc(r.engine)}</b>` : "" }, { h: "weights", f: (r) => r.scope === "pooled" ? esc(r.weights_mode) : "" },
+    { h: "cohort", f: (r) => r.scope === "pooled" ? "<b>all runs (pooled)</b>" : "&nbsp;&nbsp;↳ " + esc(r.cohort.replace(/_/g, " ")) },
+    { h: "full boots", k: "n_full_boots", num: true },
+    { h: "cold p50", num: true, f: (r) => fmt.s(r.cold_delay_ms_p50) }, { h: "mean", num: true, f: (r) => fmt.s(r.cold_delay_ms_mean) },
+    { h: "min–max", num: true, f: (r) => `${fmt.s(r.cold_delay_ms_min)} – ${fmt.s(r.cold_delay_ms_max)}` },
+    { h: "$ / cold start", num: true, f: (r) => fmt.usd(r.cold_est_cost_usd_p50) },
+    { h: "warm exec", num: true, f: (r) => fmt.s(r.warm_exec_ms_p50) },
+  ], ENG);
+  table($("tb-fb"), [
+    { h: "engine", k: "engine" }, { h: "model", k: "model" }, { h: "endpoint", k: "endpoint_id" }, { h: "setting", k: "flashboot_setting" },
+    { h: "cold", k: "n_cold", num: true }, { h: "hits", k: "n_hits", num: true },
+    { h: "hit rate", f: (r) => `<span class="bar" style="width:${Math.round(r.hit_rate * 60)}px"></span>${fmt.pct(r.hit_rate)}` },
+    { h: "hit p50", num: true, f: (r) => fmt.s(r.hit_delay_ms_p50) }, { h: "miss p50", num: true, f: (r) => fmt.s(r.miss_delay_ms_p50) },
+  ], FB);
+
+  // ---- bars: cost per cold start, cost per 1k articles ---------------------------------------------------
+  function bars(el, items, fmtv, aria) {
+    const W = 560, L = 270, R = 70, rowH = 30, T = 8, H = T + items.length * rowH + 10, max = Math.max(...items.map((d) => d.v)) * 1.05;
+    const x = (v) => L + v / max * (W - L - R);
+    let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">`;
+    items.forEach((d, i) => {
+      const y = T + i * rowH + 5, h = rowH - 10;
+      g += `<text x="${L - 10}" y="${y + h / 2 + 4}" text-anchor="end">${esc(d.label)}</text>`;
+      g += `<rect class="hot" x="${L}" y="${y}" width="${Math.max(2, x(d.v) - L)}" height="${h}" fill="${d.color || SERIES[0]}" rx="3" data-tip="${esc(d.tip || d.label + ": " + fmtv(d.v))}"/>`;
+      g += `<text class="val" x="${x(d.v) + 6}" y="${y + h / 2 + 4}">${fmtv(d.v)}</text>`;
+    });
+    g += `</svg>`; el.innerHTML = g; bindTips(el);
+  }
+  bars($("ch-cost"), ENG.filter((r) => r.scope === "pooled" && r.cold_est_cost_usd_p50 != null).sort((a, b) => a.cold_est_cost_usd_p50 - b.cold_est_cost_usd_p50)
+    .map((r) => ({ label: `${r.engine} · ${r.weights_mode} (pooled)`, v: r.cold_est_cost_usd_p50, color: ENGINE_COLOR[r.engine], tip: `<b>${r.engine} · ${r.weights_mode}</b><br>${fmt.usd(r.cold_est_cost_usd_p50)} per full cold start (pooled p50 of ${r.n_full_boots})<br>cold delay p50 ${fmt.s(r.cold_delay_ms_p50)}` })),
+    fmt.usd, "Estimated dollars per full cold start by engine");
+  const scored = SC.filter((r) => r.est_cost_usd_per_1k_articles != null).sort((a, b) => a.est_cost_usd_per_1k_articles - b.est_cost_usd_per_1k_articles)
+    .map((r) => ({ label: `${r.model.replace(/^.*\//, "").replace(/-\d{8}$/, "")}${r.label ? " · " + r.label.replace("prefixcache-on", "prefix on").replace("q32awq-prefix", "prefix on") : ""}${r.concurrency > 1 ? " · c" + r.concurrency : ""}${r.backend === "runpod" ? " · " + (r.gpu_model || "runpod") : ""}`, v: r.est_cost_usd_per_1k_articles,
+      tip: `<b>${esc(r.backend)} · ${esc(r.model)}</b>${r.label ? " · " + esc(r.label) : ""}<br>${fmt.usd(r.est_cost_usd_per_1k_articles)} per 1,000 articles · ${r.wall_s_per_article} s/article<br>mean score ${r.mean_score} · parse ok ${fmt.pct(r.parse_ok_rate)}${r.gpu_model ? " · " + esc(r.gpu_model) : ""}` }));
+  bars($("ch-score"), scored, fmt.usd, "Estimated dollars per thousand scored articles by backend");
+  const lowParse = SC.filter((r) => r.parse_ok_rate < 0.9);
+  $("score-note").textContent = lowParse.length ? `Parse-ok below 90%: ${lowParse.map((r) => `${r.model.replace(/^.*\//, "")} (${fmt.pct(r.parse_ok_rate)}${r.label ? ", " + r.label : ""})`).join("; ")} — cheap tokens that did not return the JSON asked for. Local ollama runs have no price and are omitted.` : "Local ollama runs have no price and are omitted.";
+
+  // ---- chart: sweep TTFT lines ------------------------------------------------------------------------------
+  (function () {
+    const rates = [1, 2, 4, 8, 16, "inf"];
+    const bySys = {};
+    SW.forEach((r) => { if (r.ttft_ms_p50 != null && r.completed > 0) (bySys[r.system] = bySys[r.system] || []).push(r); });
+    const systems = Object.keys(bySys).filter((s) => bySys[s].length >= 3).sort();
+    const W = 920, L = 70, R = 30, T = 16, B = 44, H = 360;
+    const xi = (rate) => rates.indexOf(rate === "inf" ? "inf" : Number(rate));
+    const x = (rate) => L + xi(rate) / (rates.length - 1) * (W - L - R);
+    const ys = systems.flatMap((s) => bySys[s].map((r) => r.ttft_ms_p50));
+    const lo = Math.log10(Math.min(...ys) * 0.8), hi = Math.log10(Math.max(...ys) * 1.25);
+    const y = (ms) => T + (1 - (Math.log10(ms) - lo) / (hi - lo)) * (H - T - B);
+    const yticks = [200, 500, 1000, 2000, 5000, 10000, 20000, 50000].filter((t) => Math.log10(t) > lo && Math.log10(t) < hi);
+    let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Median time to first token versus request rate per sweep">`;
+    g += `<g class="grid">` + yticks.map((t) => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/>`).join("") + `</g>`;
+    g += yticks.map((t) => `<text x="${L - 8}" y="${y(t) + 4}" text-anchor="end">${t >= 1000 ? t / 1000 + " s" : t + " ms"}</text>`).join("");
+    g += rates.map((r) => `<text x="${x(r)}" y="${H - 20}" text-anchor="middle">${r === "inf" ? "∞" : r + " req/s"}</text>`).join("");
+    g += `<text x="${W - R}" y="${H - 4}" text-anchor="end">offered request rate</text><text x="${L}" y="${T - 4}">TTFT p50 (log)</text>`;
+    const short = (s) => s.replace(/^runpod_serverless_/, "").replace(/pagedserve/, "emberserve");
+    systems.forEach((s, i) => {
+      const pts = bySys[s].map((r) => ({ r, X: x(r.request_rate), Y: y(r.ttft_ms_p50) })).sort((a, b) => a.X - b.X);
+      g += `<path class="lineplot" d="${pts.map((p, k) => (k ? "L" : "M") + p.X.toFixed(1) + " " + p.Y.toFixed(1)).join(" ")}" stroke="${SERIES[i % SERIES.length]}"/>`;
+      pts.forEach((p) => {
+        const r = p.r, t = `<b>${esc(short(s))}</b> · ${esc(r.endpoint_mode)}<br>rate ${r.request_rate === "inf" ? "∞" : r.request_rate + " req/s"}${r.max_concurrency ? " · c" + r.max_concurrency : ""}<br>TTFT p50 ${fmt.s(r.ttft_ms_p50)} · p99 ${fmt.s(r.ttft_ms_p99)}<br>e2e p99 ${fmt.s(r.e2e_ms_p99)} · ${fmt.int(r.completed)} ok / ${fmt.int(r.failed)} failed · ${Math.round(r.output_tok_s)} tok/s`;
+        g += `<circle cx="${p.X}" cy="${p.Y}" r="4" fill="${SERIES[i % SERIES.length]}" stroke="var(--surface)" stroke-width="1.5"/><circle class="hot" cx="${p.X}" cy="${p.Y}" r="10" fill="transparent" data-tip="${esc(t)}"/>`;
+      });
+    });
+    g += `</svg>`;
+    $("ch-sweep").innerHTML = g; bindTips($("ch-sweep"));
+    legend($("lg-sweep"), systems.map((s, i) => ({ color: SERIES[i % SERIES.length], label: `${short(s)} (${bySys[s][0].endpoint_mode === "queue" ? "queue" : "load balancer"})` })));
+    table($("tb-sweep"), [
+      { h: "system", f: (r) => esc(short(r.system)) }, { h: "mode", k: "endpoint_mode" }, { h: "rate", f: (r) => r.request_rate === "inf" ? "∞" : r.request_rate },
+      { h: "conc.", k: "max_concurrency", num: true }, { h: "ok", k: "completed", num: true }, { h: "failed", k: "failed", num: true },
+      { h: "req/s", num: true, f: (r) => r.requests_per_s == null ? "–" : r.requests_per_s.toFixed(1) }, { h: "out tok/s", num: true, f: (r) => fmt.int(Math.round(r.output_tok_s || 0)) },
+      { h: "TTFT p50", num: true, f: (r) => fmt.s(r.ttft_ms_p50) }, { h: "TTFT p99", num: true, f: (r) => fmt.s(r.ttft_ms_p99) }, { h: "e2e p99", num: true, f: (r) => fmt.s(r.e2e_ms_p99) },
+    ], SW);
+  })();
+})();
+</script>
+<!--ARTIFACT-END-->
+</head>
+<body></body>
+</html>
