@@ -8,7 +8,8 @@ building [emberserve](https://github.com/ashwinsreedhar28/emberserve) (an LLM in
 The end state is a gold layer that answers: cold-start distribution by GPU and image, FlashBoot hit rate,
 cost per job, and how emberserve compares to worker-vllm on the same endpoints.
 
-**Status:** landing zone + bronze layer done. Silver and gold are designed below, not built.
+**Status:** landing → bronze → silver → gold all built and verified; `docs/gold_report.md` is the rendered output.
+Next: a dashboard page over the gold tables.
 
 ## Architecture
 
@@ -46,10 +47,12 @@ export JAVA_HOME="$(brew --prefix openjdk@17)"; export PATH="$JAVA_HOME/bin:$PAT
 git clone https://github.com/ashwinsreedhar28/serverless-lakehouse && cd serverless-lakehouse
 make setup                                   # .venv with pyspark==3.5.9, delta-spark==3.3.3
 make hooks                                   # pre-commit secrets scan
-make bronze RUN_LABEL=2026-10-02_initial     # landing → bronze Delta tables (first run fetches Delta jars from Maven)
-make verify                                  # every landed file's rows are in its table, counted independently
-make show                                    # rows / files / run_labels per table
+make all RUN_LABEL=2026-10-02_initial        # bronze → verify → silver → gold → docs/gold_report.md
+make show                                    # rows / files / run_labels per bronze table
 ```
+
+Or step by step: `make bronze` (landing → bronze; the first run fetches the Delta jars from Maven), `make verify`
+(every landed file's rows are in its table, counted independently of Spark), `make silver`, `make gold`, `make report`.
 
 `make land` re-extracts from `~/emberserve` (falls back to `~/pagedserve`) and `~/Pulse`; it is only needed
 when the sources change. `FORMAT=parquet` runs the same code without the Delta extension, for sandboxes
@@ -67,7 +70,13 @@ lakehouse/
   spark.py                  one SparkSession builder (delta | parquet)
   bronze.py                 data/landing/ → bronze tables
   verify.py                 bronze row counts vs. an independent Python count of each landed file
+  silver.py                 bronze + seeds/ → typed, parsed, deduplicated silver tables
+  gold.py                   silver → aggregate tables, one question each
+  report.py                 gold → docs/gold_report.md
   show.py                   what is in bronze
+seeds/                      hand-curated dimensions: coldstart_series.csv (engine/model/GPU/FlashBoot per series),
+                            gpu_labels.csv (tier, GPU model, $/hr per label) — facts the machine-written sources lack
+docs/gold_report.md         the gold tables rendered as markdown by `make report`
 scripts/check_secrets.py    scan tracked/staged files; exit 1 on any hit
 .githooks/pre-commit        refuses .env / data/lakehouse paths, then runs check_secrets --staged
 tests/                      redaction behaviour; landing zone ↔ manifest consistency; no secrets landed
@@ -122,27 +131,40 @@ Every table has four lineage columns:
 Typing rule: CSV values stay strings; JSON scalars keep their JSON type (`max_tokens` is a long because the
 file says `16`, not `"16"`); JSON objects are stored as compact JSON strings and exploded in silver.
 
-### Silver — designed, not built
+### Silver — built
 
-Typed, parsed, deduplicated; one row per *event*, keyed so gold can join.
+Typed, parsed, deduplicated; one row per *event*; rebuilt in full from bronze + seeds on every run. Every row
+carries bronze's `source_file` and `bronze_run_label`, plus `silver_built_at`.
 
-- `silver_coldstart_requests` — union of `bronze_coldstart_runs` (exploded `cold_json`/`warm_json`) and
-  `bronze_pulse_coldstart_requests` (typed), one row per Serverless request with `endpoint_id, worker_id,
-  gpu, image, engine (emberserve|worker-vllm), is_cold, delay_ms, execution_ms, flashboot_hit`; v0/runs1-3 deduped.
-- `silver_coldstart_phases` — `phases_s` exploded to (run, phase, seconds).
-- `silver_sweep_summaries`, `silver_sweep_requests` — typed sweep runs (`request_rate` null → `inf`) and
-  per-request latencies (`ttft_ms = first_token_s − arrival_s`, monotonic clock, so only differences are meaningful).
-- `silver_worker_log_events` — the three timestamp formats parsed to one UTC `ts`, `worker_id` where present,
-  `event_kind` (vllm_info | sdk_json | httpx | tqdm | other), the SDK JSON exploded.
-- `silver_scoring_requests`, `silver_scoring_batches` — typed `quality*.csv` with `est_cost_usd` as decimal.
-- `dim_gpu_placement` — hand-curated seed from `gpu_per_cycle.txt`: (run/cycle → GPU model, data center, price tier).
+| table | one row is | rows | what silver did to get it |
+|---|---|---|---|
+| `dim_coldstart_series` | one emberserve cold-start series | 13 | seed: engine, build, model, GPU, FlashBoot setting (+ how it is known), weights mode |
+| `dim_gpu_label` | one GPU label as the sources spell it | 14 | seed: tier, GPU model where recorded, $/hr with its source |
+| `silver_coldstart_requests` | one Serverless request, cold or warm, from either source | 149 | emberserve `cold_json`/`warm_json` exploded with `from_json`; Pulse CSVs typed; the 15 duplicate rows of `results_v0.csv` ≡ `results_runs1-3.csv` dropped; model names canonicalised; joined to both dims; derived `is_flashboot_hit` (cold ∧ ok ∧ delay < 5 000 ms), `billed_s`, `est_cost_usd` |
+| `silver_coldstart_phases` | one (series, run, phase or timeline mark) | 307 | emberserve `phases_s` and `timeline.marks` maps exploded |
+| `silver_sweep_summaries` | one request-rate run of a load sweep | 38 | summary/trace/args/server_latency JSON flattened to columns; `request_rate: null` → `inf` with `is_unbounded`; `endpoint_id` and queue vs load-balancer parsed from the URL |
+| `silver_sweep_requests` | one request of a sweep | 1,000 | `ttft_ms`, `e2e_ms`, `tpot_ms`, `arrival_offset_s` from the monotonic-clock fields; null when the request failed |
+| `silver_worker_log_events` | one worker-log line | 9,367 | three timestamp prefixes parsed to one UTC `ts_utc` (console copy-paste carries `GMT-0400`; the endpoint-logs export is laptop-local, converted from America/New_York); payload classified into `event_kind` ∈ {vllm, runpod_sdk, progress, httpx, wrapper, other}; `process_role`, `pid`, `level`, `request_id`, `message` extracted |
+| `silver_scoring_requests` | one scored article | 700 | typed; empty strings → null; prices as doubles |
+| `silver_scoring_batches` | one scoring batch | 14 | typed |
 
-### Gold — designed, not built
+### Gold — built
 
-- `gold_coldstart_by_gpu_image` — p50/p90/max `delay_ms`, n, by `gpu × image × engine`.
-- `gold_flashboot_hit_rate` — share of cold requests with `delay_ms` under the FlashBoot threshold, by endpoint and day.
-- `gold_cost_per_job` — `execution_ms × $/hr` of the GPU tier, plus scoring-job `est_cost_usd`, by backend.
-- `gold_engine_comparison` — emberserve vs worker-vllm on the same GPU and model: cold `delay_ms`, warm `execution_ms`, sweep p99.
+| table | the question it answers | rows |
+|---|---|---|
+| `gold_engine_comparison` | same GPU (RTX 4090), same model (Qwen3-8B): full cold boot p50/min/max, warm delay and exec, $ per cold start — emberserve baked vs fetched vs worker-vllm | 3 |
+| `gold_worker_boot_phases` | worker-vllm's boot anatomy from its own log lines: seconds to weights, `torch.compile`, CUDA-graph capture, `init engine`, start → API ready, ready → first job; per log file and boot | 15 |
+| `gold_flashboot_hit_rate` | share of cold-labelled requests answered in under 5 s, per engine × endpoint × FlashBoot setting | 13 |
+| `gold_coldstart_by_gpu_image` | delay/exec distribution per engine × model × GPU × weights mode × FlashBoot × kind | 30 |
+| `gold_cost_per_job` | `(delay_ms + exec_ms) / 3.6e6 × $/hr` per engine × model × tier × kind, only where the tier price is known | 14 |
+| `gold_scoring_cost_per_batch` | $ and seconds per article for the Pulse scoring job, per backend × model | 14 |
+| `gold_sweep_latency` | TTFT / e2e / throughput per system × request rate, with per-request p99 where records exist | 38 |
+
+Headline numbers today (`docs/gold_report.md`): a full cold boot of Qwen3-8B on an RTX 4090 is **17 s** with
+emberserve and baked weights, **38 s** with emberserve fetching weights at start, and **210 s** with worker-vllm —
+of which `torch.compile` is 24–65 s, CUDA-graph capture 5–8 s on vLLM 0.30 but 75–81 s on 0.28 (full graphs), and
+`init engine` 25–140 s. The two worker logs with a warm compile cache show `torch.compile` at **1.1–1.3 s** instead
+of 44 s and start → API ready at 97 s instead of 173 s.
 
 ## Decisions
 
@@ -170,6 +192,26 @@ Typed, parsed, deduplicated; one row per *event*, keyed so gold can join.
 10. **pagedserve → emberserve.** The engine repo is being renamed; this repo uses the new name for the
     source root and falls back to `~/pagedserve` locally. File names and values inside the data keep the old
     name — bronze does not rewrite source content.
+11. **Silver and gold are rebuilt in full (`overwrite`), bronze is never rewritten.** They are deterministic
+    functions of bronze + seeds; appending to them would only create a second dedupe problem. Silver reads each
+    source file's *latest* bronze ingest, so a re-landed file replaces its rows downstream while bronze keeps both.
+12. **Facts the machines did not write live in `seeds/`, with their source.** The GPU behind a tier label, the
+    FlashBoot setting of a series, and $/hr were read off the Runpod console or run notes. Each seed row names
+    where it came from (`flashboot_source`, `price_source`), and silver prints any label without a seed row
+    instead of silently nulling it.
+13. **FlashBoot hit = cold-labelled request with `delay_ms` < 5 000.** Observed resumes are 0.5–0.9 s and the
+    fastest full boot is 12.6 s, so the threshold is not sensitive. It cannot distinguish a FlashBoot resume from a
+    worker that was simply still warm (Pulse run 3 was one), so the metric is named for what it measures.
+14. **Cost is an estimate, labelled as such.** `(delay_ms + exec_ms) / 3.6e6 × price_per_hr_usd`. `delay_ms` includes
+    queue time before a worker exists, which Runpod does not bill, so this is an upper bound; the formula is a
+    column in `gold_cost_per_job`. Rows without a known tier price get null, not a guess.
+15. **Worker-log boot segmentation.** A boot opens at the wrapper's `Starting vLLM: vllm serve …` line (not vLLM's
+    own `Starting vLLM server on http://…`, which comes ~2 min later), per worker where the export names one.
+    Phase durations are what vLLM printed (`torch.compile took 23.99 s`), not inferred from timestamps, except
+    start → weights and start → API-ready, which are timestamp differences.
+16. **Fresh-host rows stay in the distributions.** `*_fresh_host` series include the image pull on a host that
+    has never run the image (328 s for the 27 GB baked image). They are real cold starts a user can hit; the
+    series dimension marks them so a view can exclude them.
 
 ## Secrets
 

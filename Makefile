@@ -4,6 +4,10 @@
 #   make land                      extract: copy + redact sources into data/landing/ (+ manifest)
 #   make bronze [RUN_LABEL=...]    ingest data/landing/ into bronze Delta tables (append-only)
 #   make verify                    bronze row counts vs. what the landing manifest says they should be
+#   make silver                    bronze + seeds/ → typed, parsed, deduped silver tables (rebuilt in full)
+#   make gold                      silver → the aggregate tables the dashboard reads (rebuilt in full)
+#   make report                    render gold to docs/gold_report.md
+#   make all                       bronze → verify → silver → gold → report
 #   make show                      row counts, run_labels and source files per bronze table
 #   make check-secrets             scan tracked + staged files for credentials (also runs in the pre-commit hook)
 #   make hooks                     point git at .githooks/ so check-secrets runs on every commit
@@ -35,7 +39,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify show check-secrets hooks test clean java-check
+.PHONY: setup land bronze verify silver gold report all show check-secrets hooks test clean java-check
 
 setup: $(VENV)/.installed java-check
 
@@ -63,6 +67,17 @@ bronze: $(VENV)/.installed java-check
 
 verify: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.verify --format $(FORMAT)
+
+silver: $(VENV)/.installed java-check
+	$(PYTHON) -m lakehouse.silver --format $(FORMAT)
+
+gold: $(VENV)/.installed java-check
+	$(PYTHON) -m lakehouse.gold --format $(FORMAT)
+
+report: $(VENV)/.installed java-check
+	$(PYTHON) -m lakehouse.report --format $(FORMAT)
+
+all: bronze verify silver gold report
 
 show: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.show --format $(FORMAT)
