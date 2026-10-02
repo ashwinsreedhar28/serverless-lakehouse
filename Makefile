@@ -23,6 +23,14 @@ PULSE_DIR      ?= $(HOME)/Pulse
 FORMAT         ?= delta
 RUN_LABEL      ?= $(shell date -u +%Y-%m-%dT%H%MZ)
 
+# Java: Spark 3.5 wants 11/17 (21 works for local mode). Homebrew's openjdk@17 is keg-only, so macOS's
+# java_home does not see it unless symlinked; fall back to brew's prefix. Linux: whatever `java` is on PATH.
+JAVA_HOME ?= $(shell /usr/libexec/java_home -v 17 2>/dev/null || brew --prefix openjdk@17 2>/dev/null)
+ifneq ($(strip $(JAVA_HOME)),)
+export JAVA_HOME
+export PATH := $(JAVA_HOME)/bin:$(PATH)
+endif
+
 .PHONY: setup land bronze verify show check-secrets hooks test clean java-check
 
 setup: $(VENV)/.installed java-check
@@ -34,20 +42,25 @@ $(VENV)/.installed: requirements.txt
 	@touch $@
 
 java-check:
-	@java -version 2>&1 | grep -E 'version "(11|17|21)' >/dev/null \
-	  || { echo "need Java 11/17/21 on PATH (brew install openjdk@17; export JAVA_HOME=\$$(/usr/libexec/java_home -v 17))"; exit 1; }
-	@java -version 2>&1 | head -1
+	@command -v java >/dev/null 2>&1 || { \
+	  echo "java not found. brew install openjdk@17, then either:"; \
+	  echo "  export JAVA_HOME=\"\$$(brew --prefix openjdk@17)\"; export PATH=\"\$$JAVA_HOME/bin:\$$PATH\"   (add to ~/.zshrc)"; \
+	  echo "  or once: sudo ln -sfn \"\$$(brew --prefix openjdk@17)/libexec/openjdk.jdk\" /Library/Java/JavaVirtualMachines/openjdk-17.jdk"; \
+	  exit 1; }
+	@java -version 2>&1 | grep -qE 'version "(11|17|21)' \
+	  || { java -version 2>&1 | head -1; echo "need Java 11, 17 or 21 for Spark 3.5"; exit 1; }
+	@echo "java: $$(java -version 2>&1 | head -1)   JAVA_HOME=$(JAVA_HOME)"
 
 land: $(VENV)/.installed
 	$(PYTHON) -m lakehouse.land --emberserve "$(EMBERSERVE_DIR)" --pulse "$(PULSE_DIR)"
 
-bronze: $(VENV)/.installed
+bronze: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.bronze --run-label "$(RUN_LABEL)" --format $(FORMAT)
 
-verify: $(VENV)/.installed
+verify: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.verify --format $(FORMAT)
 
-show: $(VENV)/.installed
+show: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.show --format $(FORMAT)
 
 check-secrets: $(VENV)/.installed

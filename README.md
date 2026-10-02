@@ -41,7 +41,8 @@ version `LANDING_DIR` would be an S3 prefix and nothing downstream would change.
 
 ```bash
 brew install openjdk@17                      # Spark 3.5 runs on Java 11/17 (21 works for local mode)
-export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+export JAVA_HOME="$(brew --prefix openjdk@17)"; export PATH="$JAVA_HOME/bin:$PATH"   # brew's JDK is keg-only;
+                                             # the Makefile also detects it, so this is only needed outside make
 git clone https://github.com/ashwinsreedhar28/serverless-lakehouse && cd serverless-lakehouse
 make setup                                   # .venv with pyspark==3.5.9, delta-spark==3.3.3
 make hooks                                   # pre-commit secrets scan
