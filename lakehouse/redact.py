@@ -27,14 +27,28 @@ PATTERNS: list[tuple[str, Pattern[str], str]] = [
     ("private_key",   re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "<redacted:private_key>"),
     ("private_key_truncated", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*"), "<redacted:private_key>"),
     ("jwt",           re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), "<redacted:jwt>"),
+    ("google_api_key", re.compile(r"AIza[0-9A-Za-z_\-]{35}"),                   "<redacted:google_api_key>"),
+    ("stripe_key",    re.compile(r"[sr]k_(?:live|test)_[A-Za-z0-9]{16,}"),      "<redacted:stripe_key>"),
+    ("sendgrid_key",  re.compile(r"SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}"), "<redacted:sendgrid_key>"),
+    ("slack_webhook", re.compile(r"https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]{16,}"),
+     "<redacted:slack_webhook>"),
     ("bearer",        re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._+/=\-]{20,}"),    "Bearer <redacted:bearer>"),
+    ("basic_auth",    re.compile(r"(?i)\bbasic\s+[A-Za-z0-9+/=]{16,}"),         "Basic <redacted:basic_auth>"),
+    # user:password@ in a URL or connection string (postgres, redis, https with credentials); the user name is kept
+    ("url_password",  re.compile(r"(://[^:/\s@'\"]+:)([^@\s'\"]{6,})@"),         r"\1<redacted:url_password>@"),
+    # ?key=… / &token=… / &api_key=… query parameters
+    ("query_secret",  re.compile(r"(?i)([?&](?:api[_-]?key|key|token|access[_-]?token|secret|password)=)([^&\s'\"<]{8,})"),
+     r"\1<redacted:query_secret>"),
     # key=value and "key": "value" forms where the key name contains a secret-ish word — including compound names
     # such as AWS_SECRET_ACCESS_KEY or OPENROUTER_API_KEY. Keeps the key, quotes and separator, drops the value.
-    # The value class allows base64 (+ / =) and excludes '<' so already-redacted values don't re-match; a purely
-    # numeric value is not a secret ("first_token_s": 2073169.405621416 is a timestamp).
+    # The value runs to the next whitespace, quote, comma, semicolon, bracket or '<' (so already-redacted values
+    # and a trailing `",` are left alone) and must be 8+ chars, not purely numeric ("prompt_tokens": 53404 and
+    # "first_token_s": 2073169.405621416 are counts and timestamps) and not a placeholder the source already wrote
+    # (vLLM logs 'hf_token': 'hf_REDACTED'; runbooks write KEY=... or KEY=xxxx).
     ("kv_secret",
      re.compile(r"(?i)([A-Za-z0-9_\-]*(?:api[_-]?key|secret|token(?!izer)|password|passwd|authorization|credential)[A-Za-z0-9_\-]*)"
-                r"(['\"]?\s*[:=]\s*['\"]?)(?![0-9.]{16,}(?![A-Za-z0-9+/=_\-]))([A-Za-z0-9+/=._\-]{16,})"),
+                r"(['\"]?\s*[:=]\s*['\"]?)(?![0-9.]+(?:[\s'\"<>,;)\]}]|$))"
+                r"(?![^\s'\"<>,;)\]}]*(?:redacted|placeholder|\.\.\.|\*\*\*|xxxx|changeme|your[_-]?))([^\s'\"<>,;)\]}]{8,})"),
      r"\1\2<redacted:kv_secret>"),
 ]
 

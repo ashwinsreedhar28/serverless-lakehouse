@@ -27,6 +27,10 @@ def get_spark(fmt: str = "delta", app: str = "serverless-lakehouse") -> SparkSes
         .appName(app)
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.sql.shuffle.partitions", "8")   # tables are KB–MB; 200 shuffle partitions is pure overhead
+        # Bronze is append-only and a CSV may grow a column between landings. Delta merges schemas on append; plain
+        # parquet has no table schema, so without this a reader takes the first file's columns and the new column
+        # silently vanishes. Reading all footers costs nothing at this size.
+        .config("spark.sql.parquet.mergeSchema", "true")
         .config("spark.ui.enabled", "false")
         .config("spark.ui.showConsoleProgress", "false")
         .config("spark.driver.host", "127.0.0.1")

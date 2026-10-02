@@ -23,19 +23,25 @@ VIEWS = {
         "Same GPU, same model. `scope=pooled` rows mix every full boot of that engine; the `cohort` rows beneath split "
         "them by host state and data era — quote a pooled median only as pooled. The two warm-host worker-vllm samples "
         "are the pair behind the 147.5 s in the Sep 30 write-up.",
-        ["engine", "weights_mode", "scope", "cohort", "n_full_boots", "cold_delay_ms_p50", "cold_delay_ms_mean",
+        ["engine", "weights_mode", "scope", "cohort", "n_full_boots", "n_undated", "cold_delay_ms_p50", "cold_delay_ms_mean",
          "cold_delay_ms_min", "cold_delay_ms_max", "cold_est_cost_usd_p50", "n_warm", "warm_exec_ms_p50", "dates"]),
     "gold_worker_boot_phases": (
         "worker-vllm boot anatomy, per worker log",
-        "Where do the seconds go between `vllm serve` and 'Application startup complete'?",
-        ["source_file", "vllm_version", "graph_mode", "start_to_weights_s", "weights_load_s", "torch_compile_s", "graph_capture_s",
-         "init_engine_s", "start_to_api_ready_s", "api_ready_to_first_job_s", "kv_cache_gib"]),
+        "Where do the seconds go between `vllm serve` and 'Application startup complete'? One row per engine boot; "
+        "`segmented_by` says which line opened it (the wrapper's `Starting vLLM:`, or vLLM's own engine init when the "
+        "console export missed the wrapper line — then the `start_to_*` deltas are null rather than borrowed). "
+        "`graph_capture_s` is the sum over the capture passes (`n_graph_passes`; vLLM 0.30 does two).",
+        ["source_file", "worker_id", "segmented_by", "vllm_version", "graph_mode", "start_to_weights_s", "weights_load_s",
+         "torch_compile_s", "graph_capture_s", "n_graph_passes", "init_engine_s", "start_to_api_ready_s",
+         "api_ready_to_first_job_s", "kv_cache_gib"]),
     "gold_flashboot_hit_rate": (
         "Fast cold responses (FlashBoot proxy)",
         "Share of *successful* cold-labelled requests answered under the threshold — a FlashBoot resume or a worker that "
-        "was still warm; the data cannot tell them apart.",
-        ["engine", "model", "endpoint_id", "flashboot_setting", "n_cold", "n_hits", "hit_rate", "hit_delay_ms_p50",
-         "miss_delay_ms_p50"]),
+        "was still warm; the data cannot tell them apart. `n_cold_failed` counts the cold attempts the denominator "
+        "excludes (FAILED jobs, HTTP errors); `n_resume_recorded` is the engine's own `flashboot_resume` flag where a file "
+        "carries one (1 of 13 series files).",
+        ["engine", "model", "endpoint_id", "flashboot_setting", "n_cold", "n_cold_failed", "n_hits", "n_resume_recorded",
+         "hit_rate", "hit_delay_ms_p50", "miss_delay_ms_p50"]),
     "gold_coldstart_by_gpu_image": (
         "Cold-start distribution by engine × model × GPU × weights mode × FlashBoot",
         "The headline distribution; `kind` separates the cold request from the warm one that followed it.",
@@ -69,7 +75,11 @@ def fmt(v) -> str:
             return "NaN"
         if v == float("inf"):
             return "inf"
-        return f"{v:,.3f}" if abs(v) < 1 else f"{v:,.1f}" if abs(v) < 1000 else f"{v:,.0f}"
+        if abs(v) >= 1000:
+            return f"{v:,.0f}"
+        # up to 4 decimals under 1, 3 otherwise, trailing zeros dropped: a price of 1.22 prints as 1.22, not 1.2
+        s = f"{v:.4f}" if abs(v) < 1 else f"{v:.3f}"
+        return s.rstrip("0").rstrip(".") if "." in s else s
     if isinstance(v, datetime):
         return v.strftime("%Y-%m-%d %H:%M:%S")
     if isinstance(v, (list, tuple)):
@@ -105,9 +115,17 @@ def main(argv: list[str] | None = None) -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(text, encoding="utf-8")
     print(text)
-    print(f"\nwrote {args.out.relative_to(REPO_ROOT)}")
+    print(f"\nwrote {shown(args.out)}")
     spark.stop()
     return 0
+
+
+def shown(p: Path) -> str:
+    """Repo-relative when inside the repo, absolute otherwise (an --out under /tmp must not crash after writing)."""
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
 
 
 if __name__ == "__main__":

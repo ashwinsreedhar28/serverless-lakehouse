@@ -50,6 +50,7 @@ code { font-family: var(--mono); font-size: 0.85em; background: var(--code-bg); 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.25rem 1rem; margin: 1rem 0; min-width: 0; }
 .card header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
 .card .q { color: var(--muted); font-size: 0.92rem; margin: 0.25rem 0 0; max-width: 78ch; }
+.muted { color: var(--muted); font-size: 0.85em; }
 .card .src { font-family: var(--mono); font-size: 0.72rem; color: var(--faint); white-space: nowrap; }
 .legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin: 0.9rem 0 0.25rem; font-size: 0.82rem; color: var(--muted); }
 .legend span { display: inline-flex; align-items: center; gap: 0.4rem; }
@@ -104,7 +105,7 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
 
 <section class="card" id="c-boot">
   <header><div><h2>Where worker-vllm's boot seconds go</h2>
-  <p class="q">From vLLM's own log lines: weights downloaded and loaded, <code>torch.compile</code>, CUDA-graph capture, the rest of engine init, then the API server coming up. One bar per boot, sorted by total. Two boots hit a warm compile cache. The 75–81 s graph captures are the two Sep 23 boots on an unidentified 24 GB-tier GPU; the capture mode (FULL + PIECEWISE) is the same across boots.</p></div>
+  <p class="q">From vLLM's own log lines: weights downloaded and loaded, <code>torch.compile</code>, CUDA-graph capture (summed over its passes — vLLM 0.30 does two), the rest of engine init, then the API server coming up. One bar per boot, sorted by total. Two boots hit a warm compile cache. The 74–81 s graph captures are the three Sep 23 boots on an unidentified 24 GB-tier GPU; the capture mode (FULL + PIECEWISE) is the same across boots. Boots whose export has no <code>vllm serve</code> line (the console missed it, or the log starts mid-boot) have no wall-clock bar and appear in the table only.</p></div>
   <span class="src">gold_worker_boot_phases</span></header>
   <div class="legend" id="lg-boot"></div>
   <div class="chart" id="ch-boot"></div>
@@ -120,7 +121,7 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
 </section>
 <section class="card" id="c-fb">
   <header><div><h2>Fast cold responses (FlashBoot proxy)</h2>
-  <p class="q">Share of <em>successful</em> cold-labelled requests answered under the threshold, per endpoint and setting. The data cannot tell a FlashBoot resume from a worker that was still warm.</p></div>
+  <p class="q">Share of <em>successful</em> cold-labelled requests answered under the threshold, per endpoint and setting. The data cannot tell a FlashBoot resume from a worker that was still warm. <code>failed</code> counts the cold attempts the denominator leaves out, so a 100 % on one boot reads as 1-of-1-after-N-failures.</p></div>
   <span class="src">gold_flashboot_hit_rate</span></header>
   <div class="tblwrap" id="tb-fb"></div>
 </section>
@@ -301,9 +302,10 @@ const GOLD = /*GOLD_JSON*/null;
     $("ch-boot").innerHTML = g; bindTips($("ch-boot"));
     legend($("lg-boot"), PH.map((p) => ({ color: p.color, label: p.label })));
     table($("tb-boot"), [
-      { h: "log", f: (r) => esc(r.source_file.replace(/^.*\//, "")) }, { h: "boot", k: "boot_index", num: true }, { h: "vllm", k: "vllm_version" },
+      { h: "log", f: (r) => esc(r.source_file.replace(/^.*\//, "")) }, { h: "boot", k: "boot_index", num: true }, { h: "worker", f: (r) => esc(r.worker_id || "–") },
+      { h: "opened by", f: (r) => esc((r.segmented_by || "").replace(/ \(.*$/, "")) }, { h: "vllm", k: "vllm_version" },
       { h: "→ weights", num: true, f: (r) => fmt.sec(r.start_to_weights_s) }, { h: "compile", num: true, f: (r) => fmt.sec(r.torch_compile_s) },
-      { h: "graphs", num: true, f: (r) => fmt.sec(r.graph_capture_s) }, { h: "init engine", num: true, f: (r) => fmt.sec(r.init_engine_s) },
+      { h: "graphs", num: true, f: (r) => fmt.sec(r.graph_capture_s) + (r.n_graph_passes > 1 ? ` <span class="muted">(${r.n_graph_passes} passes)</span>` : "") }, { h: "init engine", num: true, f: (r) => fmt.sec(r.init_engine_s) },
       { h: "→ API ready", num: true, f: (r) => fmt.sec(r.start_to_api_ready_s) }, { h: "→ first job", num: true, f: (r) => fmt.sec(r.api_ready_to_first_job_s) },
       { h: "KV cache", num: true, f: (r) => r.kv_cache_gib == null ? "–" : r.kv_cache_gib.toFixed(1) + " GiB" },
     ], BOOT);
@@ -313,7 +315,7 @@ const GOLD = /*GOLD_JSON*/null;
   table($("tb-engine"), [
     { h: "engine", f: (r) => r.scope === "pooled" ? `<b>${esc(r.engine)}</b>` : "" }, { h: "weights", f: (r) => r.scope === "pooled" ? esc(r.weights_mode) : "" },
     { h: "cohort", f: (r) => r.scope === "pooled" ? "<b>all runs (pooled)</b>" : "&nbsp;&nbsp;↳ " + esc(r.cohort.replace(/_/g, " ")) },
-    { h: "full boots", k: "n_full_boots", num: true },
+    { h: "full boots", k: "n_full_boots", num: true }, { h: "undated", num: true, f: (r) => r.n_undated ? String(r.n_undated) : "" },
     { h: "cold p50", num: true, f: (r) => fmt.s(r.cold_delay_ms_p50) }, { h: "mean", num: true, f: (r) => fmt.s(r.cold_delay_ms_mean) },
     { h: "min–max", num: true, f: (r) => `${fmt.s(r.cold_delay_ms_min)} – ${fmt.s(r.cold_delay_ms_max)}` },
     { h: "$ / cold start", num: true, f: (r) => fmt.usd(r.cold_est_cost_usd_p50) },
@@ -321,8 +323,8 @@ const GOLD = /*GOLD_JSON*/null;
   ], ENG);
   table($("tb-fb"), [
     { h: "engine", k: "engine" }, { h: "model", k: "model" }, { h: "endpoint", k: "endpoint_id" }, { h: "setting", k: "flashboot_setting" },
-    { h: "cold", k: "n_cold", num: true }, { h: "hits", k: "n_hits", num: true },
-    { h: "hit rate", f: (r) => `<span class="bar" style="width:${Math.round(r.hit_rate * 60)}px"></span>${fmt.pct(r.hit_rate)}` },
+    { h: "cold", k: "n_cold", num: true }, { h: "failed", num: true, f: (r) => r.n_cold_failed ? String(r.n_cold_failed) : "" }, { h: "hits", k: "n_hits", num: true },
+    { h: "hit rate", f: (r) => r.hit_rate == null ? "–" : `<span class="bar" style="width:${Math.round(r.hit_rate * 60)}px"></span>${fmt.pct(r.hit_rate)}` },
     { h: "hit p50", num: true, f: (r) => fmt.s(r.hit_delay_ms_p50) }, { h: "miss p50", num: true, f: (r) => fmt.s(r.miss_delay_ms_p50) },
   ], FB);
 

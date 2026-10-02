@@ -66,15 +66,19 @@ def flashboot_hit_rate(req: DataFrame) -> DataFrame:
     """Fast-cold-response rate, a *proxy* for FlashBoot: successful cold-labelled requests answered under the
     threshold. Denominator = successful cold requests (failures excluded). It cannot tell a FlashBoot resume from a
     worker that was still warm; Runpod's own accounting is not in the data."""
-    cold = req.where("ok and kind = 'cold'")
-    hit = F.col("is_flashboot_hit")
+    cold = req.where("kind = 'cold'")
+    ok = F.col("ok")
+    hit = ok & F.coalesce(F.col("is_flashboot_hit"), F.lit(False))
+    # n_cold_failed sits beside the rate so a 100 % on one boot reads as 1-of-1-after-N-failures, not as a clean record
     return (cold.groupBy("engine", "model", "endpoint_id", F.col("flashboot").alias("flashboot_setting"))
-                .agg(F.count("*").alias("n_cold"),
+                .agg(F.sum(ok.cast("int")).alias("n_cold"),
+                     F.sum((~ok).cast("int")).alias("n_cold_failed"),
                      F.sum(hit.cast("int")).alias("n_hits"),
+                     F.sum(F.coalesce(F.col("flashboot_resume_recorded"), F.lit(False)).cast("int")).alias("n_resume_recorded"),
                      F.percentile_approx(F.when(hit, F.col("delay_ms")), 0.5).alias("hit_delay_ms_p50"),
-                     F.percentile_approx(F.when(~hit, F.col("delay_ms")), 0.5).alias("miss_delay_ms_p50"),
+                     F.percentile_approx(F.when(ok & ~hit, F.col("delay_ms")), 0.5).alias("miss_delay_ms_p50"),
                      F.min("request_ts_utc").alias("first_request_utc"), F.max("request_ts_utc").alias("last_request_utc"))
-                .withColumn("hit_rate", F.round(F.col("n_hits") / F.col("n_cold"), 3))
+                .withColumn("hit_rate", F.when(F.col("n_cold") > 0, F.round(F.col("n_hits") / F.col("n_cold"), 3)))
                 .withColumn("hit_threshold_ms", F.lit(FLASHBOOT_HIT_MS))
                 .orderBy("engine", "model", "endpoint_id"))
 
@@ -84,9 +88,11 @@ def engine_comparison(req: DataFrame) -> DataFrame:
 
     Two kinds of row, told apart by `scope`: `pooled` aggregates every full boot of that engine × weights mode;
     one row per `cohort` splits them by host state and data era, because a pooled median mixes a fresh host that
-    had to pull the image, same-night reruns on a warm host, and the Sep 23 Pulse-era runs (worker-vllm 2.27 with
-    endpoint rollouts). Quote the pooled number only with the word pooled; the cohort rows reproduce the figures in
-    earlier write-ups (the two warm-host worker-vllm samples average 147.5 s).
+    had to pull the image, same-night reruns on a warm host, and the Sep 23 Pulse-era runs (worker-vllm running vLLM
+    v0.28.0, with endpoint rollouts). Quote the pooled number only with the word pooled; the cohort rows reproduce the
+    figures in earlier write-ups (the two warm-host worker-vllm samples average 147.5 s). `n_undated` counts boots whose
+    file carries no wall-clock timestamp, so `dates` is the dates of the dated boots only. A cohort with warm requests
+    but no full boot (a FlashBoot resume) keeps its row with n_full_boots = 0 so the cohort rows sum to the pooled row.
     """
     same = (req.where("ok and model = 'Qwen3-8B' and gpu_model = 'RTX 4090'")
                .withColumn("cohort", F.when(F.col("host_state") != "unknown", F.col("host_state"))
@@ -102,39 +108,53 @@ def engine_comparison(req: DataFrame) -> DataFrame:
                          F.min("delay_ms").alias("cold_delay_ms_min"), F.max("delay_ms").alias("cold_delay_ms_max"),
                          pct("exec_ms", 0.5, "cold_exec_ms_p50"), pct("est_cost_usd", 0.5, "cold_est_cost_usd_p50"),
                          F.array_sort(F.collect_set("series_label")).alias("series"),
-                         F.array_sort(F.collect_set(F.date_format("request_ts_utc", "yyyy-MM-dd"))).alias("dates")))
+                         F.array_sort(F.collect_set(F.date_format("request_ts_utc", "yyyy-MM-dd"))).alias("dates"),
+                         F.sum(F.col("request_ts_utc").isNull().cast("int")).alias("n_undated")))
         w = (df_warm.groupBy(*keys)
                     .agg(F.count("*").alias("n_warm"), pct("delay_ms", 0.5, "warm_delay_ms_p50"), pct("exec_ms", 0.5, "warm_exec_ms_p50")))
-        out = c.join(w, keys, "full").withColumn("scope", F.lit(scope))
+        out = (c.join(w, keys, "full").withColumn("scope", F.lit(scope))
+                .withColumn("n_full_boots", F.coalesce("n_full_boots", F.lit(0)))
+                .withColumn("n_undated", F.coalesce("n_undated", F.lit(0)))
+                .withColumn("n_warm", F.coalesce("n_warm", F.lit(0))))
         if "cohort" not in keys:
             out = out.withColumn("cohort", F.lit("all runs (pooled)"))
         return out
 
     pooled = agg(cold_full, warm, ["engine", "weights_mode"], "pooled")
     cohorts = agg(cold_full, warm, ["engine", "weights_mode", "cohort"], "cohort")
-    cols = ["engine", "weights_mode", "scope", "cohort", "n_full_boots", "cold_delay_ms_p50", "cold_delay_ms_mean",
+    cols = ["engine", "weights_mode", "scope", "cohort", "n_full_boots", "n_undated", "cold_delay_ms_p50", "cold_delay_ms_mean",
             "cold_delay_ms_min", "cold_delay_ms_max", "cold_exec_ms_p50", "cold_est_cost_usd_p50", "n_warm",
             "warm_delay_ms_p50", "warm_exec_ms_p50", "series", "dates"]
     return (pooled.select(*cols).unionByName(cohorts.select(*cols))
-                  .where(F.col("n_full_boots").isNotNull())   # a cohort with only warm requests says nothing about cold boots
                   .orderBy("engine", "weights_mode", F.when(F.col("scope") == "pooled", 0).otherwise(1), "cohort"))
 
 
 def worker_boot_phases(ev: DataFrame) -> DataFrame:
     """worker-vllm's own account of a boot, from the log lines vLLM prints while starting."""
     m = F.col("message")
-    # The wrapper's "Starting vLLM: vllm serve ..." opens a boot; vLLM's own "Starting vLLM server on http://..."
-    # comes ~2 min later and must not. A console export can interleave several workers, so segment per worker.
+    # A boot opens at the wrapper's "Starting vLLM: vllm serve ..." line. vLLM prints exactly one "Initializing a V1 LLM
+    # engine" per engine start, so an init with no unmatched wrapper line before it on the same worker opens a boot too
+    # (console exports can miss the wrapper line: endpoint_logs_1450-1553 has one start line for three boots). Lines before
+    # any opener are boot 0 and are kept only when they carry boot phases (run1_cold_worker_404.log starts mid-boot).
+    # vLLM's own "Starting vLLM server on http://..." comes ~2 min later and must not open anything. A console export can
+    # interleave several workers, so segment per worker.
     is_start = m.startswith("Starting vLLM: ")
+    is_init = m.startswith("Initializing a V1 LLM engine")
+    is_graph = m.startswith("Graph capturing finished")
     wk = F.coalesce(F.col("worker_id"), F.lit(""))
     w_file = Window.partitionBy("source_file", wk).orderBy("line_no").rowsBetween(Window.unboundedPreceding, 0)
-    e = (ev.withColumn("boot_index", F.sum(is_start.cast("int")).over(w_file))
-           .where(F.col("boot_index") > 0)
-           .withColumn("_wk", wk))
+    e = (ev.withColumn("_wk", wk)
+           .withColumn("_n_start", F.sum(is_start.cast("int")).over(w_file))
+           .withColumn("_n_init", F.sum(is_init.cast("int")).over(w_file))
+           .withColumn("_orphan_init", (is_init & (F.col("_n_init") > F.col("_n_start"))).cast("int"))
+           .withColumn("boot_index", F.col("_n_start") + F.sum("_orphan_init").over(w_file)))
     num = lambda rx: F.regexp_extract(m, rx, 1).cast("double")
     g = e.groupBy("source_file", "_wk", "boot_index").agg(
         F.first(F.when(F.col("worker_id").isNotNull(), F.col("worker_id")), ignorenulls=True).alias("worker_id"),
         F.first("ts_format").alias("ts_format"),
+        F.when(F.sum(is_start.cast("int")) > 0, "Starting vLLM: (wrapper)")
+         .when(F.sum(is_init.cast("int")) > 0, "Initializing a V1 LLM engine (no wrapper line captured)")
+         .otherwise("none (log starts mid-boot)").alias("segmented_by"),
         F.min(F.when(is_start, F.col("ts_utc"))).alias("t_start_vllm"),
         F.min(F.when(m.startswith("Loading weights took"), F.col("ts_utc"))).alias("t_weights_loaded"),
         F.min(F.when(m.startswith("Application startup complete"), F.col("ts_utc"))).alias("t_api_ready"),
@@ -143,7 +163,10 @@ def worker_boot_phases(ev: DataFrame) -> DataFrame:
         F.max(F.when(m.startswith("Model loading took"), num(r"Model loading took ([\d.]+) GiB"))).alias("model_gib"),
         F.max(F.when(m.startswith("Model loading took"), num(r"and ([\d.]+) seconds"))).alias("model_load_s"),
         F.max(F.when(m.startswith("torch.compile took"), num(r"torch\.compile took ([\d.]+) s"))).alias("torch_compile_s"),
-        F.max(F.when(m.startswith("Graph capturing finished"), num(r"finished in ([\d.]+) secs"))).alias("graph_capture_s"),
+        # vLLM 0.30 captures CUDA graphs in two passes and prints "Graph capturing finished" once per pass: the boot paid
+        # for both, so sum them (max would report the larger pass as if it were the whole)
+        F.sum(F.when(is_graph, num(r"finished in ([\d.]+) secs"))).alias("graph_capture_s"),
+        F.sum(is_graph.cast("int")).alias("n_graph_passes"),
         F.max(F.when(m.startswith("init engine"), num(r"took ([\d.]+) s"))).alias("init_engine_s"),
         F.max(F.when(m.startswith("init engine"), num(r"compilation: ([\d.]+) s"))).alias("init_engine_compile_s"),
         F.max(F.when(m.startswith("Available KV cache memory"), num(r"([\d.]+) GiB"))).alias("kv_cache_gib"),
@@ -159,7 +182,10 @@ def worker_boot_phases(ev: DataFrame) -> DataFrame:
                   .groupBy("source_file", "_wk", "boot_index").agg(F.min("ts_utc").alias("t_first_job_seen")))
     # the graph-capture mode is a configuration, and it — not the vLLM version — decides whether capture takes
     # 5 s or 80 s: FULL graphs are captured per batch-size bucket for the whole model, PIECEWISE only around attention
-    out = (g.join(first_job, ["source_file", "_wk", "boot_index"], "left")
+    has_phase = (F.col("t_weights_loaded").isNotNull() | F.col("t_api_ready").isNotNull() | F.col("init_engine_s").isNotNull()
+                 | F.col("graph_capture_s").isNotNull())
+    out = (g.where((F.col("boot_index") > 0) | has_phase)      # boot 0 = lines before any opener; a row only if it is a boot
+            .join(first_job, ["source_file", "_wk", "boot_index"], "left")
             .withColumn("graph_mode", F.when(F.col("_g_full").isNotNull() & F.col("_g_piece").isNotNull(), "FULL+PIECEWISE")
                                        .otherwise(F.coalesce("_g_full", "_g_piece")))
             .withColumn("start_to_weights_s", F.col("t_weights_loaded").cast("double") - F.col("t_start_vllm").cast("double"))
@@ -168,10 +194,10 @@ def worker_boot_phases(ev: DataFrame) -> DataFrame:
             .withColumn("api_ready_to_first_job_s",
                         F.when(F.col("t_first_job_seen") >= F.col("t_api_ready"),
                                F.col("t_first_job_seen").cast("double") - F.col("t_api_ready").cast("double")))
-            .select("source_file", "boot_index", "worker_id", "ts_format", "vllm_version", "runpod_sdk_version", "graph_mode",
-                    "t_start_vllm", "t_api_ready",
+            .select("source_file", "boot_index", "worker_id", "segmented_by", "ts_format", "vllm_version", "runpod_sdk_version",
+                    "graph_mode", "t_start_vllm", "t_api_ready",
                     "start_to_weights_s", "weights_load_s", "model_gib", "model_load_s", "torch_compile_s",
-                    "graph_capture_s", "init_engine_s", "init_engine_compile_s", "start_to_api_ready_s",
+                    "graph_capture_s", "n_graph_passes", "init_engine_s", "init_engine_compile_s", "start_to_api_ready_s",
                     "api_ready_to_sdk_s", "api_ready_to_first_job_s", "kv_cache_gib", "max_concurrency_x",
                     "n_progress_lines", "n_lines")
             .orderBy("source_file", "boot_index"))
@@ -183,7 +209,8 @@ def coldstart_events(req: DataFrame) -> DataFrame:
     return (req.where("ok and kind = 'cold'")
                .select("source", "engine", "model", F.coalesce("gpu_model", F.lit("not captured")).alias("gpu_model"),
                        "gpu_tier", "weights_mode", "flashboot", "host_state", "series_label", "endpoint_id", "run_index",
-                       "request_ts_utc", "delay_ms", "exec_ms", "worker_id", "is_flashboot_hit", "est_cost_usd", "source_file")
+                       "request_ts_utc", "delay_ms", "exec_ms", "worker_id", "is_flashboot_hit", "flashboot_resume_recorded",
+                       "est_cost_usd", "source_file")
                .orderBy("engine", "weights_mode", "delay_ms"))
 
 

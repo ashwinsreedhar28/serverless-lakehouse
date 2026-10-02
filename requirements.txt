@@ -1,4 +1,4 @@
-# Spark 3.5 line: Java 11/17 supported (Java 21 works for local mode). Python 3.10–3.12.
+# Spark 3.5 line: Java 11/17 supported (Java 21 works for local mode). Python 3.10+ (3.13 verified; `make setup` checks).
 # The two pins must move together: delta-spark 3.3.x is built for Spark 3.5.x.
 pyspark==3.5.9
 delta-spark==3.3.3

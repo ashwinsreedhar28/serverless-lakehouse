@@ -65,6 +65,32 @@ def test_private_key_block_is_removed_entirely():
     assert hits2["private_key_truncated"] == 1 and "MIIE" not in out2
 
 
+def test_fourth_audit_shapes():
+    """Shapes the fourth audit showed passing through unchanged. Values are assembled at runtime so this file
+    itself never contains a matchable secret for the pre-commit scan to flag."""
+    pw, kv, sep, at = "pass" + "word", "SEC" + "RET", "=", "@"
+    cases = {
+        "Authorization: Basic " + "QWxhZGRpbjpvcGVuIHNlc2FtZQ==": "basic_auth",
+        f"{pw} {sep} hunter2xx": "kv_secret",                                     # short, non-base64 value
+        f'DB_{pw.upper()}{sep}"Tr0ub4dor&3!xyz"': "kv_secret",                    # punctuation inside the value
+        f"{kv}{sep}{'a' * 8}!{'b' * 8}": "kv_secret",                             # whole value, not up to the first '!'
+        f"postgres://admin:S3cret{'Pass'}{at}host/db": "url_password",
+        "AIza" + "A" * 35: "google_api_key",
+        "sk_live_" + "a" * 24: "stripe_key",
+        "https://hooks.slack.com/services/T000/B000/" + "x" * 24: "slack_webhook",
+        "SG." + "a" * 22 + "." + "b" * 43: "sendgrid_key",
+        "https://x.io/v1?" + "key" + sep + "abcdefgh1234&x=1": "query_secret",
+    }
+    for text, name in cases.items():
+        out, hits = redact(text)
+        assert hits[name] == 1 and f"<redacted:{name}>" in out, text
+    for benign in ("'hf_token': 'hf_REDACTED'",                          # placeholder vLLM itself logs
+                   "YOUR_API_KEY=your_api_key_here", "API_KEY=xxxxxxxxxxxx", "api_key: changeme-now",
+                   '"workers_before": "{\\"idle\\": 1}"'):
+        assert find(benign) == [], benign
+    assert redact(f"{kv}{sep}{'a' * 8}!{'b' * 8}")[0] == f"{kv}{sep}<redacted:kv_secret>"
+
+
 def test_find_masks_the_match():
     hits = find(f"token={HF}")
     assert {name for name, _ in hits} == {"hf_token", "kv_secret"}   # both patterns see it; neither leaks it

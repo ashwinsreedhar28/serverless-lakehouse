@@ -11,7 +11,7 @@ What silver does
 - Types every column, explodes the JSON strings bronze kept, parses the three worker-log timestamp formats
   to UTC, normalises names that differ between sources (`qwen/qwen3-8b` and `Qwen3-8B` are one model),
   and dedupes the byte-identical Pulse CSVs.
-- Derives the handful of fields gold needs: `is_flashboot_hit`, `billed_s`, `est_cost_usd`, `ttft_ms`.
+- Derives the handful of fields gold needs: `is_flashboot_hit`, `request_duration_s`, `est_cost_usd`, `ttft_ms`.
 - Is rebuilt from scratch on every run (`overwrite`): silver is a deterministic function of bronze + seeds,
   so there is nothing to append. Every row carries `silver_built_at` and bronze's `source_file`.
 
@@ -80,7 +80,11 @@ def assert_snapshot_in_bronze(spark: SparkSession, fmt: str, manifest: dict) -> 
             present.add((r[0], r[1], r[2]) if t == "bronze_ingest_log" else (t, r[0], r[1]))
     missing = []
     for e in manifest["files"]:
-        for t in expected_rows(LANDING_DIR / e["landed_relpath"], e["dataset"]):
+        path = LANDING_DIR / e["landed_relpath"]
+        if not path.is_file():
+            raise SystemExit(f"silver: {e['landed_relpath']} is in the landing manifest but the file is gone — "
+                             f"re-run `make land` (the manifest and the mirror must agree before silver picks a snapshot)")
+        for t in expected_rows(path, e["dataset"]):
             if (t, e["landed_relpath"], e["sha256_landed"]) not in present:
                 missing.append(f"{e['landed_relpath']} → {t}")
     if missing:
@@ -162,6 +166,7 @@ REQUEST_JSON = T.StructType([
     T.StructField("delay_ms", T.LongType()), T.StructField("execution_ms", T.LongType()),
     T.StructField("worker_id", T.StringType()), T.StructField("submit_wall", T.DoubleType()),
     T.StructField("cold", T.BooleanType()), T.StructField("error", T.StringType()),
+    T.StructField("flashboot_resume", T.BooleanType()),     # written by newer emberserve builds only (1 of 13 series files)
     T.StructField("phases_s", T.MapType(T.StringType(), T.DoubleType())),
     T.StructField("timeline", T.StructType([
         T.StructField("marks", T.MapType(T.StringType(), T.DoubleType())),
@@ -174,7 +179,7 @@ REQUEST_COLUMNS = [
     "request_ts_utc", "model", "gpu_label", "gpu_label_raw", "gpu_label_override_note", "gpu_model", "gpu_tier",
     "price_per_hr_usd", "flashboot",
     "weights_mode", "http_status", "job_status", "ok", "wall_ms", "delay_ms", "exec_ms", "worker_id",
-    "prompt_tokens", "completion_tokens", "is_flashboot_hit", "request_duration_s", "est_cost_usd",
+    "prompt_tokens", "completion_tokens", "is_flashboot_hit", "flashboot_resume_recorded", "request_duration_s", "est_cost_usd",
     "host_state", "run_note", "workers_before_json", "error", "source_file", "source_sha256", "bronze_run_label",
 ]
 
@@ -221,6 +226,8 @@ def emberserve_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame
                  F.col("j.delay_ms").alias("delay_ms"), F.col("j.execution_ms").alias("exec_ms"),
                  F.col("j.worker_id").alias("worker_id"),
                  F.lit(None).cast("long").alias("prompt_tokens"), F.lit(None).cast("long").alias("completion_tokens"),
+                 # the engine's own word, where it wrote one; null means "not recorded", not "no resume"
+                 F.col("j.flashboot_resume").alias("flashboot_resume_recorded"),
                  F.coalesce(F.col("_hs"), F.lit("unknown")).alias("host_state"), "run_note",
                  F.col("health_before_json").alias("workers_before_json"),
                  F.col("j.error").alias("error"),
@@ -243,7 +250,8 @@ def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) ->
     ov = dims["dim_coldstart_request_overrides"].select(F.col("endpoint_id").alias("_oe"), F.col("ts_utc").alias("_ot"),
                                                         F.col("gpu_label").alias("_og"), F.col("note").alias("gpu_label_override_note"))
     is_num = F.col("status").rlike(r"^\d+$")
-    out = (b.join(ov, (F.col("endpoint_id") == F.col("_oe")) & (F.col("ts_utc") == F.col("_ot")), "left")
+    # compare as timestamps, not strings, so a re-export that writes "Z" instead of "+00:00" still matches the seed
+    out = (b.join(ov, (F.col("endpoint_id") == F.col("_oe")) & (F.to_timestamp(F.col("ts_utc")) == F.to_timestamp(F.col("_ot"))), "left")
             .withColumn("_label", F.coalesce(F.col("_og"), F.col("gpu")))
             .join(gpu, F.col("_label") == F.col("_gl"), "left")
             .select(
@@ -268,6 +276,7 @@ def pulse_requests(spark: SparkSession, fmt: str, dims: dict[str, DataFrame]) ->
                 F.col("delay_ms").cast("long").alias("delay_ms"), F.col("exec_ms").cast("long").alias("exec_ms"),
                 F.lit(None).cast("string").alias("worker_id"),
                 F.col("prompt_tokens").cast("long"), F.col("completion_tokens").cast("long"),
+                F.lit(None).cast("boolean").alias("flashboot_resume_recorded"),
                 F.lit("unknown").alias("host_state"), F.lit(None).cast("string").alias("run_note"),
                 F.when(F.col("workers_before") != "", F.col("workers_before")).alias("workers_before_json"),
                 F.when(F.col("error") != "", F.col("error")).alias("error"),
@@ -504,6 +513,33 @@ def build_scoring_batches(spark: SparkSession, fmt: str) -> DataFrame:
     )
 
 
+def check_seeds_matched(req: DataFrame, dims: dict[str, DataFrame]) -> None:
+    """A seed row that names a request in the data but matches nothing is a broken key, not a missing fact: the A40
+    override would silently fall back to the typed label and put a 177 s A40 boot back into the RTX 4090 comparison.
+    Hard-fail when the seed's endpoint / series is present in silver; only note it when it is not (e.g. the test
+    fixture, where the real seeds describe requests that are not there)."""
+    ov = dims["dim_coldstart_request_overrides"].select("endpoint_id", "ts_utc", "gpu_label")
+    hit = req.where(F.col("gpu_label_override_note").isNotNull()).select("endpoint_id", "request_ts_utc").distinct()
+    un_ov = (ov.join(hit, (ov.endpoint_id == hit.endpoint_id) & (F.to_timestamp(ov.ts_utc) == hit.request_ts_utc), "left_anti")
+               .collect())
+    endpoints = {r[0] for r in req.select("endpoint_id").distinct().collect()}
+    notes = dims["dim_coldstart_run_notes"].select("series_label", "run_index")
+    un_notes = notes.join(req.select("series_label", "run_index").distinct(), ["series_label", "run_index"], "left_anti").collect()
+    series = {r[0] for r in req.select("series_label").distinct().collect()}
+    bad = [f"seeds/coldstart_request_overrides.csv row ({r.endpoint_id}, {r.ts_utc}) matched no request on an endpoint that is in the data"
+           for r in un_ov if r.endpoint_id in endpoints]
+    bad += [f"seeds/coldstart_run_notes.csv row ({r.series_label}, run {r.run_index}) matched no request of a series that is in the data"
+            for r in un_notes if r.series_label in series]
+    for r in un_ov:
+        if r.endpoint_id not in endpoints:
+            print(f"  note: override seed for endpoint {r.endpoint_id} — endpoint not in this snapshot, nothing to override")
+    for r in un_notes:
+        if r.series_label not in series:
+            print(f"  note: run-note seed for series {r.series_label} — series not in this snapshot")
+    if bad:
+        raise SystemExit("silver: seed rows matched nothing — fix the seed key or the data before trusting silver:\n  " + "\n  ".join(bad))
+
+
 # --------------------------------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------------------------------
@@ -545,6 +581,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  note: gpu labels without a seeds/gpu_labels.csv row: {missing_gpu}")
     if missing_series:
         print(f"  note: series without a seeds/coldstart_series.csv row: {missing_series}")
+    check_seeds_matched(req, dims)
     ev = spark.read.format(args.format).load(str(table_path("silver_worker_log_events")))
     unparsed = ev.where(F.col("ts_utc").isNull()).count()
     print(f"  worker-log lines without a parsed timestamp: {unparsed:,} of {ev.count():,}")

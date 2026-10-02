@@ -69,10 +69,18 @@ def main(argv: list[str] | None = None) -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html, encoding="utf-8")
     rows = sum(len(v) for k, v in payload.items() if k != "meta")
-    print(f"dashboard: {len(GOLD_TABLES)} gold tables, {rows} rows → {args.out.relative_to(REPO_ROOT)} "
-          f"({args.out.stat().st_size / 1024:.0f} KB) and {args.json_out.relative_to(REPO_ROOT)} "
+    print(f"dashboard: {len(GOLD_TABLES)} gold tables, {rows} rows → {shown(args.out)} "
+          f"({args.out.stat().st_size / 1024:.0f} KB) and {shown(args.json_out)} "
           f"({args.json_out.stat().st_size / 1024:.0f} KB)")
     return 0
+
+
+def shown(p: Path) -> str:
+    """Repo-relative when inside the repo, absolute otherwise (an --out under /tmp must not crash after writing)."""
+    try:
+        return str(p.resolve().relative_to(REPO_ROOT))
+    except ValueError:
+        return str(p)
 
 
 if __name__ == "__main__":

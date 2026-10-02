@@ -135,11 +135,11 @@ if len(ev):
     med = alt.Chart(ev).mark_tick(color="#1b2128", thickness=2.5, size=34).encode(
         y=alt.Y("lane:N", sort=lane_order), x=alt.X("median(delay_s):Q"),
         tooltip=[alt.Tooltip("lane:N"), alt.Tooltip("median(delay_s):Q", title="median delay (s)", format=".1f"), alt.Tooltip("count():Q", title="n")])
-    st.altair_chart((full + hollow + med).properties(height=90 + 64 * len(lane_order)), use_container_width=True)
+    st.altair_chart((full + hollow + med).properties(height=90 + 64 * len(lane_order)), width="stretch")
     with st.expander("Table view"):
         st.dataframe(ev[["engine", "weights_mode", "model", "gpu_model", "host_state", "series_label", "endpoint_id", "when",
                          "delay_ms", "exec_ms", "hit", "est_cost_usd"]],
-                     hide_index=True, use_container_width=True,
+                     hide_index=True, width="stretch",
                      column_config={"est_cost_usd": st.column_config.NumberColumn("est. $", format="$%.4f"),
                                     "delay_ms": st.column_config.NumberColumn("delay (ms)", format="%d"),
                                     "exec_ms": st.column_config.NumberColumn("exec (ms)", format="%d")})
@@ -153,10 +153,14 @@ st.divider()
 # --------------------------------------------------------------------------------------------------
 
 st.subheader("Where worker-vllm's boot seconds go")
-st.caption("From vLLM's own log lines: weights downloaded and loaded, `torch.compile`, CUDA-graph capture, the rest of engine "
-           "init, then the API server coming up. One bar per boot, sorted by total. Two boots hit a warm compile cache.")
-PH = [("download + load weights", S[0]), ("torch.compile", S[1]), ("CUDA-graph capture", S[2]), ("rest of engine init", S[3]), ("to 'startup complete'", S[4])]
 b = BOOT[BOOT.start_to_api_ready_s.notna() & BOOT.start_to_weights_s.notna()].copy()
+n_unanchored = len(BOOT) - len(b)
+st.caption("From vLLM's own log lines: weights downloaded and loaded, `torch.compile`, CUDA-graph capture (summed over its passes — "
+           "vLLM 0.30 does two), the rest of engine init, then the API server coming up. One bar per boot, sorted by total. "
+           f"Two boots hit a warm compile cache. {n_unanchored} of {len(BOOT)} boots have no `vllm serve` line in their export "
+           "(the console missed it, or the log starts mid-boot), so their wall-clock bar cannot be drawn; they are in the table "
+           "below with their per-phase seconds.")
+PH = [("download + load weights", S[0]), ("torch.compile", S[1]), ("CUDA-graph capture", S[2]), ("rest of engine init", S[3]), ("to 'startup complete'", S[4])]
 b["name"] = (b.source_file.str.replace(r"^.*/", "", regex=True).str.replace(r"\.(log|txt)$", "", regex=True)
              .str.replace(r"_worker(_log)?", "", regex=True).str.replace(r"^serverless_coldstart_", "", regex=True)
              .str.replace(r"^endpoint_logs_1450-1553_", "", regex=True))
@@ -181,11 +185,12 @@ bars = alt.Chart(long).mark_bar(cornerRadius=2).encode(
 labels = alt.Chart(seg).mark_text(align="left", dx=6, color="#1b2128").encode(
     y=alt.Y("name:N", sort=order), x=alt.X("total:Q"),
     text=alt.Text("label:N")).transform_calculate(label="format(datum.total, '.0f') + ' s' + (datum.cache_hit ? '  · compile cache hit' : '')")
-st.altair_chart((bars + labels).properties(height=40 + 30 * len(seg)), use_container_width=True)
+st.altair_chart((bars + labels).properties(height=40 + 30 * len(seg)), width="stretch")
 with st.expander("Table view"):
-    st.dataframe(BOOT[["source_file", "boot_index", "vllm_version", "start_to_weights_s", "weights_load_s", "torch_compile_s",
-                       "graph_capture_s", "init_engine_s", "start_to_api_ready_s", "api_ready_to_first_job_s", "kv_cache_gib"]],
-                 hide_index=True, use_container_width=True)
+    st.dataframe(BOOT[["source_file", "boot_index", "worker_id", "segmented_by", "vllm_version", "start_to_weights_s", "weights_load_s",
+                       "torch_compile_s", "graph_capture_s", "n_graph_passes", "init_engine_s", "start_to_api_ready_s",
+                       "api_ready_to_first_job_s", "kv_cache_gib"]],
+                 hide_index=True, width="stretch")
 
 st.divider()
 
@@ -203,10 +208,11 @@ with c1:
     e["engine · weights"] = e.apply(lambda r: f"{r.engine} · {r.weights_mode}" if r.scope == "pooled" else "", axis=1)
     e["cohort"] = e.apply(lambda r: "all runs (pooled)" if r.scope == "pooled" else "    ↳ " + str(r.cohort).replace("_", " "), axis=1)
     e["dates"] = e.dates.apply(lambda d: ", ".join(d) if isinstance(d, list) else "")
-    st.dataframe(e[["engine · weights", "cohort", "n_full_boots", "cold_delay_ms_p50", "cold_delay_ms_mean", "cold_delay_ms_min",
+    st.dataframe(e[["engine · weights", "cohort", "n_full_boots", "n_undated", "cold_delay_ms_p50", "cold_delay_ms_mean", "cold_delay_ms_min",
                     "cold_delay_ms_max", "cold_est_cost_usd_p50", "n_warm", "warm_exec_ms_p50", "dates"]],
-                 hide_index=True, use_container_width=True,
+                 hide_index=True, width="stretch",
                  column_config={"n_full_boots": st.column_config.NumberColumn("full boots"),
+                                "n_undated": st.column_config.NumberColumn("undated", help="boots whose file carries no wall-clock timestamp; `dates` covers the rest"),
                                 "cold_delay_ms_p50": st.column_config.NumberColumn("cold p50 (ms)", format="%d"),
                                 "cold_delay_ms_mean": st.column_config.NumberColumn("cold mean (ms)", format="%d"),
                                 "cold_delay_ms_min": st.column_config.NumberColumn("min (ms)", format="%d"),
@@ -217,11 +223,14 @@ with c1:
 with c2:
     st.subheader("Fast cold responses (FlashBoot proxy)")
     st.caption(f"Share of *successful* cold-labelled requests answered in under {THR_S:.0f} s, per endpoint and setting. The data "
-               "cannot tell a FlashBoot resume from a worker that was still warm, so this is a proxy, named for what it measures.")
-    st.dataframe(FB[["engine", "model", "endpoint_id", "flashboot_setting", "n_cold", "n_hits", "hit_rate", "hit_delay_ms_p50", "miss_delay_ms_p50"]],
-                 hide_index=True, use_container_width=True,
+               "cannot tell a FlashBoot resume from a worker that was still warm, so this is a proxy, named for what it measures. "
+               "`failed` counts the cold attempts the denominator leaves out, so a 100 % on one boot reads as 1-of-1-after-N-failures.")
+    st.dataframe(FB[["engine", "model", "endpoint_id", "flashboot_setting", "n_cold", "n_cold_failed", "n_hits", "n_resume_recorded",
+                     "hit_rate", "hit_delay_ms_p50", "miss_delay_ms_p50"]],
+                 hide_index=True, width="stretch",
                  column_config={"hit_rate": st.column_config.ProgressColumn("fast-response rate", min_value=0, max_value=1, format="percent"),
-                                "flashboot_setting": "setting", "n_cold": "cold", "n_hits": "hits",
+                                "flashboot_setting": "setting", "n_cold": "cold", "n_cold_failed": "failed", "n_hits": "hits",
+                                "n_resume_recorded": st.column_config.NumberColumn("engine flag", help="requests where the engine itself wrote flashboot_resume=true (1 of 13 series files records it)"),
                                 "hit_delay_ms_p50": st.column_config.NumberColumn("hit p50 (ms)", format="%d"),
                                 "miss_delay_ms_p50": st.column_config.NumberColumn("miss p50 (ms)", format="%d")})
 
@@ -244,7 +253,7 @@ with c3:
         tooltip=["label:N", alt.Tooltip("cold_est_cost_usd_p50:Q", title="$ / cold start", format="$.4f"), alt.Tooltip("n_full_boots:Q", title="boots"),
                  alt.Tooltip("cold_delay_ms_p50:Q", title="cold p50 (ms)")])
     txt = ch.mark_text(align="left", dx=5, color="#1b2128").encode(text=alt.Text("cold_est_cost_usd_p50:Q", format="$.4f"))
-    st.altair_chart((ch + txt).properties(height=150), use_container_width=True)
+    st.altair_chart((ch + txt).properties(height=150), width="stretch")
 with c4:
     st.subheader("$ per 1,000 scored articles")
     st.caption("The Pulse scoring job, 50 articles per batch, cost from each backend's own price table. Local ollama runs have no price and are omitted.")
@@ -260,7 +269,7 @@ with c4:
                  alt.Tooltip("wall_s_per_article:Q", title="s / article", format=".2f"), alt.Tooltip("mean_score:Q", title="mean score"),
                  alt.Tooltip("parse_ok_rate:Q", title="parse ok", format=".0%")])
     txt2 = ch2.mark_text(align="left", dx=5, color="#1b2128").encode(text=alt.Text("est_cost_usd_per_1k_articles:Q", format="$.3f"))
-    st.altair_chart((ch2 + txt2).properties(height=30 * len(sc) + 20), use_container_width=True)
+    st.altair_chart((ch2 + txt2).properties(height=30 * len(sc) + 20), width="stretch")
     low = SC[SC.parse_ok_rate < 0.9]
     if len(low):
         st.caption("Parse-ok below 90%: " + "; ".join(f"{r.model.split('/')[-1]} ({r.parse_ok_rate:.0%}{', ' + r.label if isinstance(r.label, str) else ''})" for r in low.itertuples())
@@ -292,11 +301,11 @@ line = alt.Chart(sw).mark_line(point=alt.OverlayMarkDef(size=60, filled=True), s
              alt.Tooltip("e2e_ms_p99:Q", title="e2e p99 (ms)", format=".0f"), alt.Tooltip("completed:Q", title="ok"), alt.Tooltip("failed:Q", title="failed"),
              alt.Tooltip("output_tok_s:Q", title="out tok/s", format=".0f"), alt.Tooltip("max_concurrency:Q", title="max conc.")],
 )
-st.altair_chart(line.properties(height=380), use_container_width=True)
+st.altair_chart(line.properties(height=380), width="stretch")
 with st.expander("Table view"):
     swt = SW.assign(request_rate=SW.request_rate.map(lambda r: "∞" if r == "inf" else f"{float(r):g}"))  # one dtype for Arrow
     st.dataframe(swt[["system", "endpoint_mode", "request_rate", "max_concurrency", "completed", "failed", "requests_per_s", "output_tok_s",
-                      "ttft_ms_p50", "ttft_ms_p99", "e2e_ms_p50", "e2e_ms_p99"]], hide_index=True, use_container_width=True)
+                      "ttft_ms_p50", "ttft_ms_p99", "e2e_ms_p50", "e2e_ms_p99"]], hide_index=True, width="stretch")
 
 st.divider()
 st.caption(f"Method, schemas and the design decisions: [README]({REPO}#readme). The same gold tables as markdown: "

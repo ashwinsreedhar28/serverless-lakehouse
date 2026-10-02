@@ -14,7 +14,7 @@
 #   make show                      row counts, run_labels and source files per bronze table
 #   make check-secrets             scan tracked + staged files for credentials (also runs in the pre-commit hook)
 #   make hooks                     point git at .githooks/ so check-secrets runs on every commit
-#   make test                      all tests, incl. the slow end-to-end snapshot scenarios (~4 min, needs Java)
+#   make test                      all tests, incl. the slow end-to-end snapshot scenarios (5–10 min, needs Java)
 #   make test-fast                 the quick tests only (redaction, landing manifest)
 #   make clean                     delete data/lakehouse/ (landing is kept; it is the committed input)
 #
@@ -43,15 +43,20 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify silver gold report dashboard space space-push all show check-secrets hooks test test-fast clean java-check
+.PHONY: setup land bronze verify silver gold report dashboard space space-push all show check-secrets hooks test test-fast clean java-check python-check
 
-setup: $(VENV)/.installed java-check
+setup: python-check $(VENV)/.installed java-check
 
 $(VENV)/.installed: requirements.txt
 	$(PY) -m venv $(VENV)
 	$(PIP) install --upgrade pip >/dev/null
 	$(PIP) install -r requirements.txt
 	@touch $@
+
+# pyarrow 25 / pyspark 3.5.9 need Python >= 3.10; macOS's Xcode CLT python3 is 3.9 and `make setup` would die inside pip.
+python-check:
+	@$(PY) -c 'import sys; ok = sys.version_info >= (3, 10); print(f"python: {sys.version.split()[0]} ({sys.executable})"); sys.exit(0 if ok else 1)' \
+	  || { echo "need Python 3.10+ (brew install python@3.12, then: make setup PY=python3.12)"; exit 1; }
 
 java-check:
 	@command -v java >/dev/null 2>&1 || { \

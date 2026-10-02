@@ -103,6 +103,15 @@ CSV_COLUMNS = {
                                      "rate_source", "est_cost_usd", "fixture_sha", "note"],
 }
 
+# The columns every version of each CSV has and silver depends on; a file routed to a table without them is mis-tagged.
+# Chosen so the four tables' sets tell each other apart (kind/cycle/req vs label/n/concurrency vs backend/batch_id).
+CSV_KEY_COLUMNS = {
+    "bronze_pulse_coldstart_requests": ["ts_utc", "endpoint_id", "gpu", "model", "kind", "cycle", "req", "delay_ms", "exec_ms", "status"],
+    "bronze_pulse_throughput_requests": ["ts_utc", "endpoint_id", "gpu", "model", "label", "n", "concurrency", "req", "delay_ms", "status"],
+    "bronze_pulse_quality_requests": ["ts_utc", "backend", "model", "label", "batch_id", "article_id", "wall_ms", "score", "parse_ok"],
+    "bronze_pulse_quality_batches": ["batch_id", "ts_utc", "backend", "model", "label", "n", "wall_ms", "est_cost_usd"],
+}
+
 # landing dataset tag (from manifest) → bronze table(s) fed by it
 CSV_TABLE_BY_DATASET = {
     "pulse_coldstart": "bronze_pulse_coldstart_requests",
@@ -178,7 +187,22 @@ def read_csv_all_strings(spark: SparkSession, path: Path) -> DataFrame:
 
 
 def read_csv(spark: SparkSession, path: Path, dataset: str) -> dict[str, DataFrame]:
-    return {CSV_TABLE_BY_DATASET[dataset]: read_csv_all_strings(spark, path)}
+    table = CSV_TABLE_BY_DATASET[dataset]
+    df = read_csv_all_strings(spark, path)
+    # The manifest's dataset tag is a hand-written routing label. Check it against the file's own header before
+    # appending: a mis-tagged file would otherwise land its rows in a table with different columns, silently.
+    # Versions of one CSV differ (results_v0.csv lacks finish_reason/text; later files add them — decision 4 merges
+    # schemas on append), so the test is the key columns silver reads, which every version of that table has and
+    # no other table does, not the full header.
+    missing = [c for c in CSV_KEY_COLUMNS[table] if c not in df.columns]
+    if missing:
+        raise SystemExit(f"bronze: {path.name} is tagged dataset={dataset!r} (→ {table}) but its header lacks the key columns "
+                         f"{missing}.\n  file header: {df.columns}\n"
+                         f"  If the Pulse CSV layout changed on purpose, update CSV_COLUMNS/CSV_KEY_COLUMNS; if the tag is wrong, fix land.py.")
+    extra = [c for c in df.columns if c not in CSV_COLUMNS[table]]
+    if extra:
+        print(f"  note: {path.name} has columns not in CSV_COLUMNS[{table}]: {extra} (kept; schema merges on append)")
+    return {table: df}
 
 
 READERS = {
@@ -306,6 +330,10 @@ def main(argv: list[str] | None = None) -> int:
     for e in manifest["files"]:
         rel, sha, dataset = e["landed_relpath"], e["sha256_landed"], e["dataset"]
         path = landing / rel
+        if not path.is_file():
+            print(f"bronze: {rel} is in the manifest but missing from {landing}; re-run `make land` to rebuild the mirror",
+                  file=sys.stderr)
+            return 3
         actual = sha256_file(path)
         if actual != sha:
             print(f"bronze: {rel} changed since landing (manifest {sha[:12]}…, file {actual[:12]}…); re-run `make land`",

@@ -7,11 +7,12 @@ cd "$(git rev-parse --show-toplevel)"
 PY=.venv/bin/python
 [ -x "$PY" ] || PY=python3
 
-# 1. forbidden paths can never be staged, whatever they contain
-if git diff --cached --name-only | grep -E '(^|/)\.env($|\.)|^data/lakehouse/' ; then
-  echo "pre-commit: refusing to commit .env or data/lakehouse/ paths" >&2
+# 1. forbidden paths can never be staged, whatever they contain: .env, .env.*, *.env, anything under data/lakehouse/.
+#    -z + tr: git quotes unusual filenames in plain output; NUL-separated paths are seen as they are.
+if git diff --cached --name-only --diff-filter=ACMR -z | tr '\0' '\n' | grep -E '(^|/)(\.env($|\.)|[^/]*\.env$)|^data/lakehouse/' ; then
+  echo "pre-commit: refusing to commit .env / *.env or data/lakehouse/ paths" >&2
   exit 1
 fi
 
-# 2. credential patterns in the staged content
+# 2. credential patterns in the staged content (reads the index blobs, not the working tree)
 exec "$PY" scripts/check_secrets.py --staged
