@@ -31,6 +31,8 @@ export JAVA_HOME
 export PATH := $(JAVA_HOME)/bin:$(PATH)
 endif
 
+export SPARK_LOCAL_IP ?= 127.0.0.1   # quiets "hostname resolves to a loopback address" on laptops
+
 .PHONY: setup land bronze verify show check-secrets hooks test clean java-check
 
 setup: $(VENV)/.installed java-check

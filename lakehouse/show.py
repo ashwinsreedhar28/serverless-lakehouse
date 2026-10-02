@@ -27,18 +27,22 @@ def main(argv: list[str] | None = None) -> int:
         if df is None:
             print(f"{t:<34} {'-':>8}")
             continue
+        # date_format runs on the JVM in the session time zone (UTC); collecting a raw timestamp would
+        # have PySpark render it in the driver's local zone.
         agg = df.agg(F.count("*").alias("rows"),
                      F.countDistinct("source_file").alias("files"),
                      F.countDistinct("run_label").alias("labels"),
-                     F.max("ingested_at").alias("latest")).first()
+                     F.date_format(F.max("ingested_at"), "yyyy-MM-dd HH:mm:ss").alias("latest")).first()
         print(f"{t:<34} {agg['rows']:>8,} {agg['files']:>6} {agg['labels']:>10}  {agg['latest']}")
 
     log = load_table(spark, args.format, "bronze_ingest_log")
     if log is not None:
         print("\nruns:")
-        for r in (log.groupBy("run_label", "ingested_at").agg(F.sum("rows").alias("rows"), F.count("*").alias("appends"))
-                     .orderBy("ingested_at").collect()):
-            print(f"  {r['run_label']:<28} {r['ingested_at']}  {r['rows']:>7,} rows in {r['appends']} appends")
+        runs = (log.groupBy("run_label", "ingested_at").agg(F.sum("rows").alias("rows"), F.count("*").alias("appends"))
+                   .orderBy("ingested_at")
+                   .withColumn("at", F.date_format("ingested_at", "yyyy-MM-dd HH:mm:ss")).collect())
+        for r in runs:
+            print(f"  {r['run_label']:<28} {r['at']} UTC  {r['rows']:>7,} rows in {r['appends']} appends")
     spark.stop()
     return 0
 
