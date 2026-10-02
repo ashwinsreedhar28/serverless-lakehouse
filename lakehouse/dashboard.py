@@ -18,7 +18,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .config import FLASHBOOT_HIT_MS, GOLD_TABLES, REPO_ROOT, table_path
-from .spark import get_spark
+from .spark import get_spark, timestamps_as_utc_strings
 
 TEMPLATE = Path(__file__).with_name("templates") / "dashboard.html"
 
@@ -53,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     for name in GOLD_TABLES:
         df = spark.read.format(args.format).load(str(table_path(name)))
         cols = [c for c in df.columns if c != "gold_built_at"]
-        payload[name] = [{c: jsonable(r[c]) for c in cols} for r in df.select(*cols).collect()]
+        df = timestamps_as_utc_strings(df.select(*cols))      # UTC strings before collect(); never driver-local datetimes
+        payload[name] = [{c: jsonable(r[c]) for c in cols} for r in df.collect()]
     spark.stop()
 
     args.json_out.parent.mkdir(parents=True, exist_ok=True)

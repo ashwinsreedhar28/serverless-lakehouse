@@ -8,10 +8,20 @@ repo goes through `format(fmt)`, so the two modes exercise the same code.
 
 from __future__ import annotations
 
-from pyspark.sql import SparkSession
+import os
+import sys
+
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
 
 def get_spark(fmt: str = "delta", app: str = "serverless-lakehouse") -> SparkSession:
+    # Python workers must run the same interpreter as the driver. Left unset, Spark launches whatever `python3`
+    # is first on PATH, which on a machine with a newer system Python than the venv fails with
+    # "Python in worker has different version than that in driver".
+    os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+    os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
     b = (
         SparkSession.builder.master("local[*]")
         .appName(app)
@@ -36,3 +46,16 @@ def get_spark(fmt: str = "delta", app: str = "serverless-lakehouse") -> SparkSes
         raise SystemExit(f"unknown format {fmt!r} (delta|parquet)")
     spark.sparkContext.setLogLevel("ERROR")
     return spark
+
+
+def timestamps_as_utc_strings(df: DataFrame) -> DataFrame:
+    """Render every TimestampType column as an ISO-8601 UTC string on the JVM side.
+
+    PySpark's collect() hands timestamps to the driver as naive datetimes in the driver's *local* zone; a
+    laptop in US-Eastern would then serialise them four hours behind UTC with no offset. The session zone is
+    UTC, so date_format produces the right instant and the 'Z' makes it explicit.
+    """
+    for f in df.schema.fields:
+        if isinstance(f.dataType, T.TimestampType):
+            df = df.withColumn(f.name, F.date_format(F.col(f.name), "yyyy-MM-dd'T'HH:mm:ss'Z'"))
+    return df

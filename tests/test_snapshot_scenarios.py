@@ -148,6 +148,9 @@ def test_empty_file_is_a_complete_zero_row_ingest(pipe: Pipeline):
     assert "bronze_worker_log_lines" in out                             # a zero-row append is still logged
     pipe.silver()                                                       # guard accepts it via the ledger
     assert pipe.count("silver_worker_log_events") == 0
+    before = pipe.count("bronze_ingest_log")
+    assert "nothing new" in pipe.bronze("r11b")                         # a zero-row ingest is still an ingest
+    assert pipe.count("bronze_ingest_log") == before
 
 
 def test_force_reingest_does_not_duplicate_silver_events(pipe: Pipeline):

@@ -14,7 +14,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from .config import REPO_ROOT, table_path
-from .spark import get_spark
+from .spark import get_spark, timestamps_as_utc_strings
 
 # table → (title, one-line question it answers, columns to show)
 VIEWS = {
@@ -79,7 +79,7 @@ def fmt(v) -> str:
 
 def markdown_table(df: DataFrame, cols: list[str]) -> str:
     cols = [c for c in cols if c in df.columns]
-    rows = df.select(*cols).collect()
+    rows = timestamps_as_utc_strings(df.select(*cols)).collect()
     out = ["| " + " | ".join(cols) + " |", "|" + "|".join("---" for _ in cols) + "|"]
     for r in rows:
         out.append("| " + " | ".join(fmt(r[c]).replace("|", "\\|") for c in cols) + " |")

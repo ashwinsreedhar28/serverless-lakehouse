@@ -219,11 +219,19 @@ def load_or_empty(spark: SparkSession, fmt: str, name: str) -> DataFrame:
 
 
 def ingested_keys(spark: SparkSession, fmt: str, name: str) -> set[tuple[str, str]]:
-    """(source_file, source_sha256) pairs already in the table — the idempotency key."""
+    """(source_file, source_sha256) pairs already ingested into `name` — the idempotency key.
+
+    Data rows prove it; so does a ledger entry, which is the only trace a zero-row file (an empty log) leaves.
+    Without the ledger half, every retry re-appended empty files and grew the ledger.
+    """
+    keys: set[tuple[str, str]] = set()
     df = load_table(spark, fmt, name)
-    if df is None:
-        return set()
-    return {(r[0], r[1]) for r in df.select("source_file", "source_sha256").distinct().collect()}
+    if df is not None:
+        keys |= {(r[0], r[1]) for r in df.select("source_file", "source_sha256").distinct().collect()}
+    log = load_table(spark, fmt, "bronze_ingest_log")
+    if log is not None:
+        keys |= {(r[0], r[1]) for r in log.where(F.col("table") == name).select("source_file", "source_sha256").distinct().collect()}
+    return keys
 
 
 def append(df: DataFrame, fmt: str, name: str) -> None:

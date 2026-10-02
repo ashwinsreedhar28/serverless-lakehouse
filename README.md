@@ -286,8 +286,11 @@ request whose recorded GPU label did not match its placement (now a per-request 
 redaction that removed only the PEM header (now the whole block), and a snapshot guard that accepted a run which
 had written a sweep's summary but not its records (now checked per expected table, with zero-row ingests
 counted through the ledger). It also showed `--force` re-ingests duplicating silver events and renamed files
-lingering in landing; both fixed and covered in `tests/test_snapshot_scenarios.py`. Both reports and the fixes are
-in the git history (commits "Audit fixes" and "Re-audit fixes").
+lingering in landing; both fixed and covered in `tests/test_snapshot_scenarios.py`. A third pass found Spark's
+Python workers following `PATH` instead of the venv (now pinned to the driver interpreter), dashboard timestamps
+serialised in the driver's local zone without an offset (now rendered as UTC strings inside Spark), and empty
+files re-ingested on every retry (zero-row ledger entries now count as ingested). The reports and fixes are in
+the git history (commits "Audit fixes", "Re-audit fixes", "Third-audit fixes").
 
 Future work: object-storage landing (read landing files through Spark/`fsspec`), a `dim_date` and date
 partitions before the data grows, bronze schema migration for a JSON scalar that changes type (today the explicit
