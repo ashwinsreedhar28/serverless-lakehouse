@@ -8,8 +8,9 @@ building [emberserve](https://github.com/ashwinsreedhar28/emberserve) (an LLM in
 The end state is a gold layer that answers: cold-start distribution by GPU and image, FlashBoot hit rate,
 cost per job, and how emberserve compares to worker-vllm on the same endpoints.
 
-**Status:** landing → bronze → silver → gold all built and verified; `docs/gold_report.md` is the rendered output.
-Next: a dashboard page over the gold tables.
+**Status:** landing → bronze → silver → gold built and verified, plus two dashboards over gold: a Streamlit app in
+`space/` for a public Hugging Face Space, and a static `docs/dashboard.html` for offline use. `docs/gold_report.md`
+is the same gold layer as markdown.
 
 ## Architecture
 
@@ -47,8 +48,8 @@ export JAVA_HOME="$(brew --prefix openjdk@17)"; export PATH="$JAVA_HOME/bin:$PAT
 git clone https://github.com/ashwinsreedhar28/serverless-lakehouse && cd serverless-lakehouse
 make setup                                   # .venv with pyspark==3.5.9, delta-spark==3.3.3
 make hooks                                   # pre-commit secrets scan
-make all RUN_LABEL=2026-10-02_initial        # bronze → verify → silver → gold → docs/gold_report.md
-make show                                    # rows / files / run_labels per bronze table
+make all RUN_LABEL=2026-10-02_initial        # bronze → verify → silver → gold → report → dashboard
+make space                                   # the Streamlit dashboard on localhost:8501
 ```
 
 Or step by step: `make bronze` (landing → bronze; the first run fetches the Delta jars from Maven), `make verify`
@@ -57,6 +58,22 @@ Or step by step: `make bronze` (landing → bronze; the first run fetches the De
 `make land` re-extracts from `~/emberserve` (falls back to `~/pagedserve`) and `~/Pulse`; it is only needed
 when the sources change. `FORMAT=parquet` runs the same code without the Delta extension, for sandboxes
 that cannot reach Maven Central.
+
+## Dashboard
+
+`make dashboard` exports the gold tables once and feeds two pages from the same snapshot:
+
+- **Hugging Face Space** (`space/`): a Streamlit app — `space/app.py` + `space/data/gold.json`. No Spark on the
+  Space; it only draws what gold says. Run it locally with `make space`. Deployment is a GitHub Action
+  (`.github/workflows/sync-space.yml`) that uploads `space/` to the Space whenever it changes on `main`; one-time
+  setup is a Streamlit-SDK Space on huggingface.co, an `HF_TOKEN` secret and an `HF_SPACE` variable
+  (`<hf-username>/serverless-lakehouse`) on the GitHub repo. `make space-push HF_SPACE=…` does the same upload by hand.
+- **Static page** (`docs/dashboard.html`): the gold JSON embedded in one self-contained HTML file with SVG charts;
+  opens from disk or GitHub Pages, no dependencies.
+
+Both show: every cold start as a dot per engine and weights mode (log scale, FlashBoot hits hollow), worker-vllm's
+boot phases stacked per log, the engine comparison with its cohorts, FlashBoot hit rate, $ per cold start, $ per
+1,000 scored articles, and TTFT against request rate for the Serverless sweeps.
 
 ## Layout
 
@@ -73,10 +90,15 @@ lakehouse/
   silver.py                 bronze + seeds/ → typed, parsed, deduplicated silver tables
   gold.py                   silver → aggregate tables, one question each
   report.py                 gold → docs/gold_report.md
+  dashboard.py              gold → docs/dashboard.html (static) + space/data/gold.json (for the Space)
+  templates/dashboard.html  the static page; SVG charts drawn in the browser from the embedded JSON
   show.py                   what is in bronze
+space/                      Streamlit app for the Hugging Face Space: app.py, requirements.txt, README.md (Space card), data/gold.json
+.github/workflows/          sync-space.yml — uploads space/ to the Space on push
 seeds/                      hand-curated dimensions: coldstart_series.csv (engine/model/GPU/FlashBoot per series),
                             gpu_labels.csv (tier, GPU model, $/hr per label) — facts the machine-written sources lack
 docs/gold_report.md         the gold tables rendered as markdown by `make report`
+docs/dashboard.html         the static dashboard rendered by `make dashboard`
 scripts/check_secrets.py    scan tracked/staged files; exit 1 on any hit
 .githooks/pre-commit        refuses .env / data/lakehouse paths, then runs check_secrets --staged
 tests/                      redaction behaviour; landing zone ↔ manifest consistency; no secrets landed

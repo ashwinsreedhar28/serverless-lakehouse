@@ -1,11 +1,11 @@
-"""Render the gold layer as a self-contained dashboard page: docs/dashboard.html.
+"""Export the gold layer for the two dashboards.
 
-    python -m lakehouse.dashboard [--format delta|parquet] [--out docs/dashboard.html]
+    python -m lakehouse.dashboard [--format delta|parquet] [--out docs/dashboard.html] [--json-out space/data/gold.json]
 
-The page is static: every gold table is embedded as JSON and the charts are drawn in the browser, so the
-file opens from disk, from GitHub Pages, or as a shared artifact with no server behind it. Rebuilding the
-dashboard is `make gold && make dashboard`; the page never computes a metric itself — it only draws what
-gold already says, which keeps "what the dashboard shows" and "what the tables say" the same thing.
+Writes the same gold snapshot twice: embedded in docs/dashboard.html (a static page, SVG charts drawn in the
+browser, opens from disk or GitHub Pages) and as space/data/gold.json, which the Streamlit app in space/ reads
+on Hugging Face. Neither dashboard computes a metric itself — they draw what gold already says, so "what the
+dashboard shows" and "what the tables say" are the same thing. Rebuild with `make gold && make dashboard`.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--format", default="delta", choices=["delta", "parquet"])
     ap.add_argument("--out", type=Path, default=REPO_ROOT / "docs" / "dashboard.html")
+    ap.add_argument("--json-out", type=Path, default=REPO_ROOT / "space" / "data" / "gold.json")
     args = ap.parse_args(argv)
     spark = get_spark(args.format, app="gold-dashboard")
 
@@ -55,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
         payload[name] = [{c: jsonable(r[c]) for c in cols} for r in df.select(*cols).collect()]
     spark.stop()
 
+    args.json_out.parent.mkdir(parents=True, exist_ok=True)
+    args.json_out.write_text(json.dumps(payload, indent=0), encoding="utf-8")
+
     html = TEMPLATE.read_text(encoding="utf-8")
     marker = "/*GOLD_JSON*/null"
     if marker not in html:
@@ -64,8 +68,9 @@ def main(argv: list[str] | None = None) -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html, encoding="utf-8")
     rows = sum(len(v) for k, v in payload.items() if k != "meta")
-    print(f"dashboard: {len(GOLD_TABLES)} gold tables, {rows} rows embedded → {args.out.relative_to(REPO_ROOT)} "
-          f"({args.out.stat().st_size / 1024:.0f} KB)")
+    print(f"dashboard: {len(GOLD_TABLES)} gold tables, {rows} rows → {args.out.relative_to(REPO_ROOT)} "
+          f"({args.out.stat().st_size / 1024:.0f} KB) and {args.json_out.relative_to(REPO_ROOT)} "
+          f"({args.json_out.stat().st_size / 1024:.0f} KB)")
     return 0
 
 

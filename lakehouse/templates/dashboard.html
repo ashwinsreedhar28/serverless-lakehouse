@@ -163,7 +163,7 @@ const GOLD = /*GOLD_JSON*/null;
   if (!GOLD) { document.getElementById("meta").textContent = "No data embedded: run `make dashboard`."; return; }
   const $ = (id) => document.getElementById(id);
   const fmt = {
-    s: (ms) => ms == null ? "–" : ms < 1000 ? (ms / 1000).toFixed(2) + " s" : ms < 100000 ? (ms / 1000).toFixed(1) + " s" : Math.round(ms / 1000) + " s",
+    s: (ms) => ms == null ? "–" : ms < 1000 ? (ms / 1000).toFixed(2) + " s" : ms < 300000 ? (ms / 1000).toFixed(1) + " s" : Math.round(ms / 1000) + " s",
     sec: (s) => s == null ? "–" : s < 10 ? s.toFixed(1) + " s" : Math.round(s) + " s",
     usd: (v) => v == null ? "–" : "$" + (v < 0.01 ? v.toFixed(4) : v < 1 ? v.toFixed(3) : v.toFixed(2)),
     pct: (v) => v == null ? "–" : Math.round(v * 100) + "%",

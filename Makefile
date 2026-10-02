@@ -7,7 +7,9 @@
 #   make silver                    bronze + seeds/ → typed, parsed, deduped silver tables (rebuilt in full)
 #   make gold                      silver → the aggregate tables the dashboard reads (rebuilt in full)
 #   make report                    render gold to docs/gold_report.md
-#   make dashboard                 render gold to docs/dashboard.html (static, self-contained)
+#   make dashboard                 render gold to docs/dashboard.html (static) and space/data/gold.json (for the Space)
+#   make space                     run the Streamlit dashboard locally (space/app.py) in its own venv
+#   make space-push HF_SPACE=u/n   upload space/ to a Hugging Face Space by hand (the GitHub Action does it on push)
 #   make all                       bronze → verify → silver → gold → report → dashboard
 #   make show                      row counts, run_labels and source files per bronze table
 #   make check-secrets             scan tracked + staged files for credentials (also runs in the pre-commit hook)
@@ -40,7 +42,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify silver gold report dashboard all show check-secrets hooks test clean java-check
+.PHONY: setup land bronze verify silver gold report dashboard space space-push all show check-secrets hooks test clean java-check
 
 setup: $(VENV)/.installed java-check
 
@@ -80,6 +82,21 @@ report: $(VENV)/.installed java-check
 
 dashboard: $(VENV)/.installed java-check
 	$(PYTHON) -m lakehouse.dashboard --format $(FORMAT)
+
+SPACE_VENV ?= .venv-space
+$(SPACE_VENV)/.installed: space/requirements.txt
+	$(PY) -m venv $(SPACE_VENV)
+	$(SPACE_VENV)/bin/pip install --upgrade pip >/dev/null
+	$(SPACE_VENV)/bin/pip install -r space/requirements.txt
+	@touch $@
+
+space: $(SPACE_VENV)/.installed
+	cd space && ../$(SPACE_VENV)/bin/streamlit run app.py
+
+space-push: $(SPACE_VENV)/.installed
+	@[ -n "$(HF_SPACE)" ] || { echo "usage: make space-push HF_SPACE=<hf-username>/serverless-lakehouse  (needs huggingface-cli login or HF_TOKEN)"; exit 1; }
+	$(SPACE_VENV)/bin/pip install -q "huggingface_hub>=0.25"
+	$(SPACE_VENV)/bin/huggingface-cli upload "$(HF_SPACE)" space . --repo-type space --commit-message "sync from local $$(git rev-parse --short HEAD)"
 
 all: bronze verify silver gold report dashboard
 
