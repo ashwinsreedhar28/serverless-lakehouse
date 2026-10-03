@@ -6,7 +6,7 @@ colorTo: gray
 sdk: static
 pinned: false
 license: mit
-short_description: Gold-layer dashboard of a PySpark + Delta lakehouse over Runpod Serverless benchmarks
+short_description: Gold dashboard: PySpark+Delta lakehouse over Runpod benchmarks
 ---
 
 # serverless-lakehouse — dashboard
