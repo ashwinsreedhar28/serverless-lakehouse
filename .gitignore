@@ -25,3 +25,6 @@ __pycache__/
 .vscode/
 audit/*.md
 !audit/AUDIT_PROMPT.md
+
+# the static Space copies docs/dashboard.html in at upload time (make space-push / sync-space.yml)
+space-static/index.html

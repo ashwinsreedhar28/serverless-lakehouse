@@ -10,8 +10,9 @@
 #   make dashboard                 render gold to docs/dashboard.html (static) and space/data/gold.json (for the Space)
 #   make space                     run the Streamlit dashboard locally (space/app.py) in its own venv
 #   make space-login                `hf auth login` (browser code flow) — once per machine
-#   make space-create HF_SPACE=u/n create the Docker-SDK Space on huggingface.co (idempotent), then upload space/
-#   make space-push HF_SPACE=u/n   upload space/ to an existing Space by hand with `hf upload` (the GitHub Action does it on push)
+#   make space-create HF_SPACE=u/n create the Space on huggingface.co (static SDK, free tier; idempotent), then upload docs/dashboard.html
+#   make space-push HF_SPACE=u/n   re-upload the static dashboard to an existing Space (the GitHub Action does it on push)
+#   make space-create-docker / space-push-docker   same for the Streamlit app in space/ (Docker SDK — needs an HF PRO plan)
 #   make all                       bronze → verify → silver → gold → report → dashboard
 #   make show                      row counts, run_labels and source files per bronze table
 #   make check-secrets             scan tracked + staged files for credentials (also runs in the pre-commit hook)
@@ -45,7 +46,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify silver gold report dashboard space space-login space-create space-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -107,15 +108,27 @@ $(SPACE_VENV)/bin/hf: $(SPACE_VENV)/.installed
 space-login: $(SPACE_VENV)/bin/hf
 	$(SPACE_VENV)/bin/hf auth login
 
-# Docker SDK: the Space builds space/Dockerfile and serves Streamlit on 7860 (space/README.md carries sdk/app_port).
+# Hosting on huggingface.co: static Spaces are free; Docker/Gradio Spaces on cpu-basic need HF PRO (402 otherwise).
+# The static Space is docs/dashboard.html served as index.html — same gold snapshot the Streamlit app reads.
 space-create: $(SPACE_VENV)/bin/hf
 	@[ -n "$(HF_SPACE)" ] || { echo "usage: make space-create HF_SPACE=<hf-username>/serverless-lakehouse  (after make space-login)"; exit 1; }
-	$(SPACE_VENV)/bin/hf repos create "$(HF_SPACE)" --type space --sdk docker --public --exist-ok
+	$(SPACE_VENV)/bin/hf repos create "$(HF_SPACE)" --type space --sdk static --public --exist-ok
 	$(MAKE) space-push HF_SPACE="$(HF_SPACE)"
-	@echo "Space: https://huggingface.co/spaces/$(HF_SPACE)   (first build takes a few minutes; watch the Logs tab)"
+	@echo "Space: https://huggingface.co/spaces/$(HF_SPACE)"
 
-space-push: $(SPACE_VENV)/bin/hf
+space-push: $(SPACE_VENV)/bin/hf docs/dashboard.html
 	@[ -n "$(HF_SPACE)" ] || { echo "usage: make space-push HF_SPACE=<hf-username>/serverless-lakehouse  (needs make space-login or HF_TOKEN)"; exit 1; }
+	cp docs/dashboard.html space-static/index.html
+	$(SPACE_VENV)/bin/hf upload "$(HF_SPACE)" space-static . --repo-type space --commit-message "sync from local $$(git rev-parse --short HEAD)"
+
+# The Streamlit app, for an account with HF PRO: Docker SDK, space/Dockerfile serves on 7860 (space/README.md carries sdk/app_port).
+space-create-docker: $(SPACE_VENV)/bin/hf
+	@[ -n "$(HF_SPACE)" ] || { echo "usage: make space-create-docker HF_SPACE=<hf-username>/serverless-lakehouse-app"; exit 1; }
+	$(SPACE_VENV)/bin/hf repos create "$(HF_SPACE)" --type space --sdk docker --public --exist-ok
+	$(MAKE) space-push-docker HF_SPACE="$(HF_SPACE)"
+
+space-push-docker: $(SPACE_VENV)/bin/hf
+	@[ -n "$(HF_SPACE)" ] || { echo "usage: make space-push-docker HF_SPACE=<hf-username>/serverless-lakehouse-app"; exit 1; }
 	$(SPACE_VENV)/bin/hf upload "$(HF_SPACE)" space . --repo-type space --commit-message "sync from local $$(git rev-parse --short HEAD)"
 
 all: bronze verify silver gold report dashboard

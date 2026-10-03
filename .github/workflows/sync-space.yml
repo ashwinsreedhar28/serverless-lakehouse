@@ -1,12 +1,13 @@
-# Push space/ to the Hugging Face Space whenever it changes on main.
+# Push the static dashboard to the Hugging Face Space whenever it changes on main.
 # One-time setup in the GitHub repo: Settings → Secrets → HF_TOKEN (a write token from huggingface.co/settings/tokens)
-# and Settings → Variables → HF_SPACE = <hf-username>/serverless-lakehouse (create the Space first: Docker SDK, blank
-# template — space/Dockerfile runs Streamlit on port 7860). Uses the `hf` CLI (huggingface_hub ≥ 1.0 removed huggingface-cli).
+# and Settings → Variables → HF_SPACE = <hf-username>/serverless-lakehouse. Create the Space first with
+# `make space-login && make space-create HF_SPACE=…` (static SDK — free; Docker Spaces need HF PRO).
+# Uses the `hf` CLI (huggingface_hub ≥ 1.0 removed huggingface-cli).
 name: sync-space
 on:
   push:
     branches: [main]
-    paths: ["space/**"]
+    paths: ["docs/dashboard.html", "space-static/**"]
   workflow_dispatch:
 jobs:
   sync:
@@ -17,10 +18,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -q "huggingface_hub>=1.0,<2"
-      - name: upload space/ to the Space
+      - name: upload the static dashboard to the Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE: ${{ vars.HF_SPACE }}
         run: |
-          hf upload "$HF_SPACE" space . --repo-type space \
+          cp docs/dashboard.html space-static/index.html
+          hf upload "$HF_SPACE" space-static . --repo-type space \
             --commit-message "sync from github ${GITHUB_SHA::7}"

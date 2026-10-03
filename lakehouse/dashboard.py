@@ -3,8 +3,8 @@
     python -m lakehouse.dashboard [--format delta|parquet] [--out docs/dashboard.html] [--json-out space/data/gold.json]
 
 Writes the same gold snapshot twice: embedded in docs/dashboard.html (a static page, SVG charts drawn in the
-browser, opens from disk or GitHub Pages) and as space/data/gold.json, which the Streamlit app in space/ reads
-on Hugging Face. Neither dashboard computes a metric itself — they draw what gold already says, so "what the
+browser; opens from disk, and is what the Hugging Face Space serves as index.html) and as space/data/gold.json,
+which the Streamlit app in space/ reads. Neither dashboard computes a metric itself — they draw what gold already says, so "what the
 dashboard shows" and "what the tables say" are the same thing. Rebuild with `make gold && make dashboard`.
 """
 

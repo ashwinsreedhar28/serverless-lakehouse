@@ -8,9 +8,9 @@ building [emberserve](https://github.com/ashwinsreedhar28/emberserve) (an LLM in
 The end state is a gold layer that answers: cold-start distribution by GPU and image, FlashBoot hit rate,
 cost per job, and how emberserve compares to worker-vllm on the same endpoints.
 
-**Status:** landing → bronze → silver → gold built and verified, plus two dashboards over gold: a Streamlit app in
-`space/` for a public Hugging Face Space, and a static `docs/dashboard.html` for offline use. `docs/gold_report.md`
-is the same gold layer as markdown.
+**Status:** landing → bronze → silver → gold built and verified, plus two dashboards over gold: a static
+`docs/dashboard.html` (served as a public Hugging Face Space from `space-static/`, and usable offline) and a Streamlit
+app in `space/` for local use. `docs/gold_report.md` is the same gold layer as markdown.
 
 ## Architecture
 
@@ -65,17 +65,16 @@ that cannot reach Maven Central.
 
 `make dashboard` exports the gold tables once and feeds two pages from the same snapshot:
 
-- **Hugging Face Space** (`space/`): a Streamlit app — `space/app.py` + `space/data/gold.json`. No Spark on the
-  Space; it only draws what gold says. Run it locally with `make space`. Deployment is a GitHub Action
-  (`.github/workflows/sync-space.yml`) that uploads `space/` to the Space whenever it changes on `main`; one-time
-  setup is a **Docker-SDK** Space on huggingface.co (the built-in Streamlit SDK is deprecated for new Spaces;
-  `space/Dockerfile` runs Streamlit on port 7860), an `HF_TOKEN` secret and an `HF_SPACE` variable
-  (`<hf-username>/serverless-lakehouse`) on the GitHub repo. The upload uses the `hf` CLI from `huggingface_hub`
-  ≥ 1.0 (`huggingface-cli` was removed). By hand from a laptop: `make space-login` once (browser code flow), then
-  `make space-create HF_SPACE=<hf-username>/serverless-lakehouse` creates the Docker-SDK Space (idempotent) and uploads
-  `space/`; `make space-push HF_SPACE=…` re-uploads later.
 - **Static page** (`docs/dashboard.html`): the gold JSON embedded in one self-contained HTML file with SVG charts;
-  opens from disk or GitHub Pages, no dependencies.
+  opens from disk or GitHub Pages, no dependencies. This is what the **Hugging Face Space** serves
+  (`space-static/`, static SDK — the free tier; Docker and Gradio Spaces need an HF PRO plan). From a laptop:
+  `make space-login` once (browser code flow), then `make space-create HF_SPACE=<hf-username>/serverless-lakehouse`
+  creates the Space (idempotent) and uploads the page as `index.html`; afterwards the GitHub Action
+  (`.github/workflows/sync-space.yml`) re-uploads it whenever `docs/dashboard.html` changes on `main`, given an
+  `HF_TOKEN` secret and an `HF_SPACE` variable on the GitHub repo. `make space-push` does the upload by hand.
+- **Streamlit app** (`space/`): `space/app.py` + `space/data/gold.json`, Altair charts, no Spark; it only draws what
+  gold says. Run it locally with `make space` (localhost:8501). It is also packaged as a Docker-SDK Space
+  (`space/Dockerfile`, port 7860; `make space-create-docker` / `make space-push-docker`) for an account with HF PRO.
 
 Both show: every cold start as a dot per engine and weights mode (log scale, FlashBoot hits hollow), worker-vllm's
 boot phases stacked per log, the engine comparison with its cohorts, fast cold responses (the FlashBoot proxy), $ per cold start (request-duration proxy), $ per
@@ -99,8 +98,9 @@ lakehouse/
   dashboard.py              gold → docs/dashboard.html (static) + space/data/gold.json (for the Space)
   templates/dashboard.html  the static page; SVG charts drawn in the browser from the embedded JSON
   show.py                   what is in bronze
-space/                      Streamlit app for the Hugging Face Space: app.py, requirements.txt, README.md (Space card), data/gold.json
-.github/workflows/          ci.yml — pytest + gitleaks on every push; sync-space.yml — uploads space/ to the Space on push (needs HF_SPACE set)
+space-static/               the Hugging Face Space (static SDK): README.md (Space card); index.html = docs/dashboard.html, copied at upload
+space/                      Streamlit app: app.py, requirements.txt, Dockerfile, README.md (Docker Space card), data/gold.json — local via `make space`
+.github/workflows/          ci.yml — pytest + gitleaks on every push; sync-space.yml — uploads the static dashboard to the Space when it changes (needs HF_SPACE set)
 seeds/                      hand-curated dimensions: coldstart_series.csv (engine/model/GPU/FlashBoot per series),
                             gpu_labels.csv (tier, GPU model, $/hr per label), coldstart_run_notes.csv (host state per run),
                             coldstart_request_overrides.csv (GPU placement that differed from the typed label);
