@@ -13,6 +13,7 @@
 #   make space-create HF_SPACE=u/n create the Space on huggingface.co (static SDK, free tier; idempotent), then upload docs/dashboard.html
 #   make space-push HF_SPACE=u/n   re-upload the static dashboard to an existing Space (the GitHub Action does it on push)
 #   make space-create-docker / space-push-docker   same for the Streamlit app in space/ (Docker SDK — needs an HF PRO plan)
+#   make dataset-create [HF_DATASET=u/n]  publish data/landing (+ gold snapshot) as a Hugging Face dataset; dataset-push re-uploads
 #   make all                       bronze → verify → silver → gold → report → dashboard
 #   make show                      row counts, run_labels and source files per bronze table
 #   make check-secrets             scan tracked + staged files for credentials (also runs in the pre-commit hook)
@@ -46,7 +47,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -130,6 +131,23 @@ space-create-docker: $(SPACE_VENV)/bin/hf
 space-push-docker: $(SPACE_VENV)/bin/hf
 	@[ -n "$(HF_SPACE)" ] || { echo "usage: make space-push-docker HF_SPACE=<hf-username>/serverless-lakehouse-app"; exit 1; }
 	$(SPACE_VENV)/bin/hf upload "$(HF_SPACE)" space . --repo-type space --commit-message "sync from local $$(git rev-parse --short HEAD)"
+
+# The landing zone as a public dataset: dataset/README.md is the card, landing/ is data/landing byte for byte, gold/ the
+# committed gold snapshot. Staged into .dataset-stage/ (gitignored) because the card must not live inside the landing
+# mirror (`make land` prunes anything the manifest does not list). --delete keeps the remote a mirror after renames.
+HF_DATASET ?= ashwin-sreedhar/runpod-serverless-benchmarks
+dataset-create: $(SPACE_VENV)/bin/hf
+	$(SPACE_VENV)/bin/hf repos create "$(HF_DATASET)" --type dataset --public --exist-ok
+	$(MAKE) dataset-push HF_DATASET="$(HF_DATASET)"
+	@echo "Dataset: https://huggingface.co/datasets/$(HF_DATASET)"
+
+dataset-push: $(SPACE_VENV)/bin/hf
+	rm -rf .dataset-stage && mkdir -p .dataset-stage/gold
+	cp dataset/README.md .dataset-stage/README.md
+	cp -R data/landing .dataset-stage/landing
+	cp docs/gold_report.md space/data/gold.json .dataset-stage/gold/
+	$(SPACE_VENV)/bin/hf upload "$(HF_DATASET)" .dataset-stage . --repo-type dataset --delete "landing/*" --delete "gold/*" \
+	  --commit-message "sync from local $$(git rev-parse --short HEAD)"
 
 all: bronze verify silver gold report dashboard
 

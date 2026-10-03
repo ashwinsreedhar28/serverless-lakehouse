@@ -103,6 +103,7 @@ lakehouse/
   dashboard.py              gold → docs/dashboard.html (static) + space/data/gold.json (for the Space)
   templates/dashboard.html  the static page; SVG charts drawn in the browser from the embedded JSON
   show.py                   what is in bronze
+dataset/                    dataset card for the landing zone as a Hugging Face dataset (`make dataset-create`; data/landing + gold snapshot)
 space-static/               the Hugging Face Space (static SDK): README.md (Space card); index.html = docs/dashboard.html, copied at upload
 space/                      Streamlit app: app.py, requirements.txt, Dockerfile, README.md (Docker Space card), data/gold.json — local via `make space`
 .github/workflows/          ci.yml — pytest + gitleaks on every push; sync-space.yml — uploads the static dashboard to the Space when it changes (needs HF_SPACE set)
@@ -117,7 +118,8 @@ scripts/audit_bundle.py     one file with every source + doc for an outside revi
 .githooks/pre-commit        refuses .env / *.env / data/lakehouse paths, then runs check_secrets --staged
 tests/                      redaction shapes; landing ↔ manifest consistency; seed CSV integrity; end-to-end snapshot
                             scenarios (revert, rename, empty file, ledger repair, partial ingest, --force); UTC rendering
-data/landing/               47 redacted source files + manifest.json (committed, 2.6 MB)
+data/landing/               47 redacted source files + manifest.json (committed, 2.6 MB; also published as the dataset
+                            huggingface.co/datasets/ashwin-sreedhar/runpod-serverless-benchmarks)
 data/lakehouse/             Delta tables (gitignored, rebuildable)
 ```
 
