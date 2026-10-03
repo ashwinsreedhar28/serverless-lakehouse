@@ -1,5 +1,10 @@
 # serverless-lakehouse
 
+[![ci](https://github.com/ashwinsreedhar28/serverless-lakehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/ashwinsreedhar28/serverless-lakehouse/actions/workflows/ci.yml)
+[![dashboard](https://img.shields.io/badge/dashboard-Hugging%20Face%20Space-blue)](https://huggingface.co/spaces/ashwin-sreedhar/serverless-lakehouse)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![PySpark 3.5.9](https://img.shields.io/badge/PySpark-3.5.9-orange) ![Delta Lake 3.3.3](https://img.shields.io/badge/Delta%20Lake-3.3.3-00ADD8)
+
 A bronze → silver → gold (medallion) lakehouse over my own Runpod Serverless benchmark data: cold-start
 timelines, load sweeps, per-request latencies, worker logs and LLM scoring-job results collected while
 building [emberserve](https://github.com/ashwinsreedhar28/emberserve) (an LLM inference engine, formerly
@@ -348,3 +353,7 @@ Worker logs can contain whatever the container printed, and sweep `args` carry a
   so it guards the shared history, not the local commit. Together they catch the credential shapes in both rule
   sets — a bounded guarantee, not "nothing can leak".
 - `tests/test_landing.py` asserts the committed landing zone matches its manifest byte-for-byte and contains no match.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The landed benchmark data under `data/landing/` is my own and is covered by the same license.
