@@ -71,7 +71,9 @@ that cannot reach Maven Central.
   setup is a **Docker-SDK** Space on huggingface.co (the built-in Streamlit SDK is deprecated for new Spaces;
   `space/Dockerfile` runs Streamlit on port 7860), an `HF_TOKEN` secret and an `HF_SPACE` variable
   (`<hf-username>/serverless-lakehouse`) on the GitHub repo. The upload uses the `hf` CLI from `huggingface_hub`
-  ≥ 1.0 (`huggingface-cli` was removed). `make space-push HF_SPACE=…` does the same upload by hand.
+  ≥ 1.0 (`huggingface-cli` was removed). By hand from a laptop: `make space-login` once (browser code flow), then
+  `make space-create HF_SPACE=<hf-username>/serverless-lakehouse` creates the Docker-SDK Space (idempotent) and uploads
+  `space/`; `make space-push HF_SPACE=…` re-uploads later.
 - **Static page** (`docs/dashboard.html`): the gold JSON embedded in one self-contained HTML file with SVG charts;
   opens from disk or GitHub Pages, no dependencies.
 
