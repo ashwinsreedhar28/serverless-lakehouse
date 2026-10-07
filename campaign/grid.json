@@ -1,0 +1,25 @@
+{
+  "_doc": "Measurement campaign grid. Prices: runpod.io/pricing Serverless, 2026-10-07. boot_s / exec_s: this repo's gold tables (emberserve baked ~17 s to ready, fetched ~38 s, worker-vllm fetched ~150-210 s; 16-token request ~2-5 s). Billed seconds per cold start = boot + exec + idle timeout (Runpod bills worker start, execution and idle per second; the image pull is not billed). FlashBoot-on cells are upper bounds: a resume replaces most of boot_s.",
+  "usd_cap": 70,
+  "n_cold_per_cell": 10,
+  "retry_allowance": 1.5,
+  "idle_timeout_s": 5,
+  "gpus": [
+    {"slug": "4090", "type": "NVIDIA GeForce RTX 4090", "gpu_model": "RTX 4090", "tier": "24 GB PRO flex", "usd_per_hr": 1.10},
+    {"slug": "a40",  "type": "NVIDIA A40",              "gpu_model": "A40",      "tier": "48 GB flex",     "usd_per_hr": 1.22},
+    {"slug": "a100", "type": "NVIDIA A100 80GB PCIe",   "gpu_model": "A100 80GB","tier": "80 GB flex",     "usd_per_hr": 2.72},
+    {"slug": "h100", "type": "NVIDIA H100 80GB HBM3",   "gpu_model": "H100 80GB","tier": "80 GB PRO flex", "usd_per_hr": 4.79}
+  ],
+  "flashboot": ["OFF", "FLASHBOOT"],
+  "images": [
+    {"slug": "baked",   "engine": "emberserve",  "model": "Qwen3-8B", "weights_mode": "baked",   "image_gb": 27,
+     "reference_endpoint": "h90byyjfb0ofbu", "boot_s": 20, "exec_s": 5, "timeline": true,
+     "note": "emberserve, Qwen3-8B baked into the image (deploy/runpod/Dockerfile.qwen3)"},
+    {"slug": "fetched", "engine": "emberserve",  "model": "Qwen3-8B", "weights_mode": "fetched", "image_gb": 6,
+     "reference_endpoint": "ri6eo614hmu510", "boot_s": 45, "exec_s": 5, "timeline": true,
+     "note": "emberserve slim image, Qwen3-8B fetched at start (deploy/runpod/Dockerfile.slim)"},
+    {"slug": "wvllm",   "engine": "worker-vllm", "model": "Qwen3-8B", "weights_mode": "fetched", "image_gb": 12,
+     "engine_build": "worker-vllm main 26f892c0a", "reference_endpoint": "rvy2p7bfia91fm", "boot_s": 180, "exec_s": 5, "timeline": false,
+     "note": "runpod-workers/worker-vllm, qwen/qwen3-8b fetched from Hugging Face at start"}
+  ]
+}

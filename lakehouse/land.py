@@ -43,7 +43,15 @@ SOURCES: list[tuple[str, str, str, tuple[str, ...]]] = [
     ("pulse", "bench/quality_batches.csv",     "pulse_quality_batches",  ()),
     # worker logs copied from the Runpod console / API; quality_*.log is quality.py stdout, not a worker log
     ("pulse", "bench/logs/*.log",              "worker_log",             ("quality_*.log",)),
+    # runs made by this repo's own tooling (tools/serverless_coldstart.py, the same format as emberserve's series):
+    # the hourly load generator and the measurement campaign. The root lives in the repo (data/sources/runpod/), so it is
+    # present on every machine and in CI, unlike the two checkouts above.
+    ("runpod", "loadgen/*.json",               "coldstart_series",       ()),
+    ("runpod", "campaign/*.json",              "coldstart_series",       ()),
 ]
+
+# Where the in-repo source root lives (relative to the repo root).
+RUNPOD_SOURCES_DIR = LANDING_DIR.parent / "sources" / "runpod"
 
 # Never landed, whatever the glob says.
 FORBIDDEN_NAMES = (".env", "*.env", ".env.*", "*.pem", "*.key", ".DS_Store")
@@ -62,6 +70,8 @@ def discover(roots: dict[str, Path]) -> list[tuple[str, str, Path, str]]:
     found: list[tuple[str, str, Path, str]] = []
     seen: set[Path] = set()
     for root_key, pattern, dataset, excludes in SOURCES:
+        if root_key not in roots:      # --only: the other roots are not being re-landed
+            continue
         root = roots[root_key]
         for p in sorted(root.glob(pattern)):
             if not p.is_file() or p in seen:
@@ -120,17 +130,26 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--emberserve", type=Path, default=None,
                     help="emberserve checkout (default ~/emberserve, falling back to ~/pagedserve while the rename lands)")
     ap.add_argument("--pulse", type=Path, default=Path("~/Pulse").expanduser())
+    ap.add_argument("--runpod", type=Path, default=RUNPOD_SOURCES_DIR,
+                    help="in-repo root for load-generator / campaign runs (default data/sources/runpod)")
     ap.add_argument("--landing-dir", type=Path, default=LANDING_DIR)
+    ap.add_argument("--only", choices=["emberserve", "pulse", "runpod"], default=None,
+                    help="re-land one source root and keep the other roots' manifest entries and files as they are "
+                         "(CI lands runpod/ without the emberserve and Pulse checkouts)")
     args = ap.parse_args(argv)
 
-    roots = {"emberserve": resolve_emberserve(args.emberserve), "pulse": args.pulse.expanduser()}
+    roots = {"emberserve": resolve_emberserve(args.emberserve), "pulse": args.pulse.expanduser(), "runpod": args.runpod}
+    if args.only:
+        roots = {args.only: roots[args.only]}
     for k, r in roots.items():
+        if k == "runpod" and not r.is_dir():
+            r.mkdir(parents=True, exist_ok=True)       # an empty in-repo root is fine: no runs yet
         if not r.is_dir():
             print(f"land: source root for {k!r} not found: {r}", file=sys.stderr)
             return 2
 
     files = discover(roots)
-    if not files:
+    if not files and not args.only:
         print("land: no source files matched", file=sys.stderr)
         return 2
 
@@ -138,22 +157,30 @@ def main(argv: list[str] | None = None) -> int:
     landing_dir.mkdir(parents=True, exist_ok=True)
     entries = [land_file(*f, landing_dir) for f in files]
 
+    manifest_path = landing_dir / MANIFEST_PATH.name
+    source_roots = {k: tilde(v) if k != "runpod" else "data/sources/runpod" for k, v in roots.items()}
+    if args.only and manifest_path.is_file():
+        # merge: the other roots' entries stay exactly as the last full `make land` wrote them
+        old = json.loads(manifest_path.read_text(encoding="utf-8"))
+        entries = [e for e in old["files"] if e["source_root"] != args.only] + entries
+        source_roots = {**old.get("source_roots", {}), **source_roots}
     manifest = {
         "landed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tool": f"lakehouse.land {__version__}",
-        "source_roots": {k: tilde(v) for k, v in roots.items()},
+        "source_roots": source_roots,
         "n_files": len(entries),
         "bytes_landed": sum(e["bytes_landed"] for e in entries),
         "redactions_total": sum(sum(e["redactions"].values()) for e in entries),
         "files": entries,
     }
-    manifest_path = landing_dir / MANIFEST_PATH.name
     manifest_path.write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
 
-    # landing is a mirror: a file the source no longer has (renamed, deleted) must not linger beside the manifest
+    # landing is a mirror: a file the source no longer has (renamed, deleted) must not linger beside the manifest.
+    # With --only, prune inside that root's directory only.
     keep = {e["landed_relpath"] for e in entries} | {manifest_path.name}
+    scope = landing_dir / args.only if args.only else landing_dir
     pruned = 0
-    for p in sorted(landing_dir.rglob("*"), reverse=True):
+    for p in sorted(scope.rglob("*"), reverse=True) if scope.is_dir() else []:
         rel = p.relative_to(landing_dir).as_posix()
         if p.is_file() and rel not in keep:
             p.unlink(); pruned += 1
@@ -163,7 +190,8 @@ def main(argv: list[str] | None = None) -> int:
     by_ds: dict[str, int] = {}
     for e in entries:
         by_ds[e["dataset"]] = by_ds.get(e["dataset"], 0) + 1
-    print(f"landed {len(entries)} files, {manifest['bytes_landed']:,} bytes → {landing_dir}")
+    print(f"landed {len(entries)} files{' (--only ' + args.only + ', others kept)' if args.only else ''}, "
+          f"{manifest['bytes_landed']:,} bytes → {landing_dir}")
     for ds, n in sorted(by_ds.items()):
         print(f"  {ds:<24} {n:>3} files")
     print(f"  redactions: {manifest['redactions_total']}" + (f" · pruned {pruned} stale landed file(s)" if pruned else ""))

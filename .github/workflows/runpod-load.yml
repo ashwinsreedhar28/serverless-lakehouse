@@ -1,14 +1,18 @@
-# COPY the Runpod snapshots that reached @RUNPOD since the last run into bronze, then rebuild the runpod-tagged dbt models.
-# Every 3 hours: one warehouse resume (~1–2 min of X-Small) per run. Same secrets as runpod-poll.yml.
+# Every 3 hours: land whatever new run files reached data/sources/runpod/ (load generator, campaign) into data/landing/
+# with `land --only runpod` (no emberserve / Pulse checkout needed), commit the landing change, COPY the new files and the
+# Runpod snapshots that reached @RUNPOD into bronze, verify, and rebuild silver + gold + the runpod models. One warehouse
+# resume (~1–2 min of X-Small) per run. Secrets as runpod-poll.yml.
 name: runpod-load
 on:
   schedule:
     - cron: "19 */3 * * *"
   workflow_dispatch:
+concurrency: { group: loadgen, cancel-in-progress: false }
 jobs:
   load:
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'ashwinsreedhar28' }}
+    permissions: { contents: write }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,15 +24,39 @@ jobs:
           install -d -m 700 "$HOME/.snowflake"
           printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$HOME/.snowflake/lakehouse_rsa_key.p8"
           chmod 600 "$HOME/.snowflake/lakehouse_rsa_key.p8"
+      - name: land new runs (runpod root only) and commit
+        run: |
+          python -m lakehouse.land --only runpod
+          git config user.name "loadgen[bot]"
+          git config user.email "loadgen@users.noreply.github.com"
+          git add data/landing/
+          git commit -m "land: runpod runs $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]" || true
+          git pull --rebase -q && git push -q || true
+      - name: bronze (COPY INTO new landed files) + verify
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+        run: |
+          python -u -m lakehouse.sf.bronze --run-label "gha_${GITHUB_RUN_ID}"
+          python -u -m lakehouse.sf.verify
       - name: COPY INTO bronze_runpod_polls
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-        run: python -m lakehouse.sf.runpod load --run-label "gha_${GITHUB_RUN_ID}"
-      - name: dbt build (runpod models + tests)
+        run: python -u -m lakehouse.sf.runpod load --run-label "gha_${GITHUB_RUN_ID}"
+      - name: dbt build (everything)
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY_PATH: /home/runner/.snowflake/lakehouse_rsa_key.p8
         working-directory: snowflake/dbt
-        run: dbt build --no-use-colors --select tag:runpod
+        run: dbt seed --no-use-colors && dbt build --no-use-colors
+      - name: spend log
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+        run: |
+          python -u -m lakehouse.sf.spend
+          git add docs/spend_log.md
+          git commit -m "spend log $(date -u +%Y-%m-%dT%H:%MZ) [skip ci]" || true
+          git pull --rebase -q && git push -q || true

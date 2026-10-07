@@ -32,7 +32,16 @@
 #   make sf-show                   bronze rows / files / ledger (+ stage listing with SF_SHOW_STAGE=1)
 #   make sf-runpod-poll            snapshot the Runpod API (needs RUNPOD_API_KEY) → data/runpod/polls/ → PUT @RUNPOD
 #   make sf-runpod-load            COPY new snapshots into bronze_runpod_polls + dbt build --select tag:runpod
+#   make sf-spend                  docs/spend_log.md from Runpod's billing records (via the poller) vs campaign/loadgen estimates
 #   Every sf-* target also tees its output to snowflake/logs/<target>.log.
+#
+# Runpod measurement campaign and load generator (need RUNPOD_API_KEY_RW in snowflake/.env; tools/campaign.py, tools/runpod_endpoint.py):
+#   make campaign-plan             price the grid (campaign/grid.json) → campaign/estimate.csv; no API call, no spend
+#   make campaign-create           create one endpoint per cell (+ seed rows); campaign-create DRY=1 only prints the bodies
+#   make campaign-slot [N_COLD=1]  one cold start per cell, all cells concurrently, then land --only runpod + spend check
+#   make campaign-status / campaign-teardown   progress; DELETE every campaign endpoint
+#   make loadgen-create            the load generator's endpoint (4090 PRO, FlashBoot on, baked image, idle 10 s, max 1)
+#   make loadgen-off / loadgen-on  kill switch: workers.max 0 / 1 (LOADGEN_ENDPOINT in snowflake/.env)
 #
 # Overrides:  EMBERSERVE_DIR, PULSE_DIR (source roots), FORMAT=delta|parquet, RUN_LABEL
 
@@ -59,7 +68,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: sf-spend campaign-plan campaign-create campaign-slot campaign-status campaign-teardown loadgen-create loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -191,7 +200,7 @@ SF_PYTHON := $(SF_VENV)/bin/python -u
 SF_DBT    := $(SF_VENV)/bin/dbt
 SF_LOGS   := snowflake/logs
 -include snowflake/.env
-export SNOWFLAKE_ACCOUNT SNOWFLAKE_USER SNOWFLAKE_PRIVATE_KEY_PATH SNOWFLAKE_PRIVATE_KEY_PASSPHRASE SNOWFLAKE_ROLE SNOWFLAKE_WAREHOUSE SNOWFLAKE_DATABASE RUNPOD_API_KEY
+export SNOWFLAKE_ACCOUNT SNOWFLAKE_USER SNOWFLAKE_PRIVATE_KEY_PATH SNOWFLAKE_PRIVATE_KEY_PASSPHRASE SNOWFLAKE_ROLE SNOWFLAKE_WAREHOUSE SNOWFLAKE_DATABASE RUNPOD_API_KEY RUNPOD_API_KEY_RW LOADGEN_ENDPOINT
 # dbt does not expand ~ in private_key_path
 SNOWFLAKE_PRIVATE_KEY_PATH ?= $(HOME)/.snowflake/lakehouse_rsa_key.p8
 export SNOWFLAKE_PRIVATE_KEY_PATH := $(subst ~,$(HOME),$(SNOWFLAKE_PRIVATE_KEY_PATH))
@@ -236,7 +245,40 @@ sf-runpod-load: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.runpod load 2>&1 | tee $(SF_LOGS)/sf-runpod-load.log; exit $${PIPESTATUS[0]}
 	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors --select tag:runpod 2>&1 | tee ../../$(SF_LOGS)/dbt-runpod.log; exit $${PIPESTATUS[0]}
 
+sf-spend: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.spend 2>&1 | tee $(SF_LOGS)/sf-spend.log; exit $${PIPESTATUS[0]}
+
 sf-all: sf-bronze sf-verify sf-silver-gold sf-parity
+
+$(SF_VENV)/.httpx: $(SF_VENV)/.installed
+	$(SF_VENV)/bin/pip install -q "httpx>=0.27,<1" && touch $@
+
+N_COLD ?= 1
+campaign-plan:
+	$(PY) tools/campaign.py plan
+
+campaign-create: $(SF_VENV)/.httpx
+	$(SF_PYTHON) tools/campaign.py create $(if $(DRY),--dry-run,) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+
+campaign-slot: $(SF_VENV)/.httpx $(SF_LOGS)
+	$(SF_PYTHON) tools/campaign.py slot --n-cold $(N_COLD) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+
+campaign-status:
+	$(SF_PYTHON) tools/campaign.py status
+
+campaign-teardown:
+	$(SF_PYTHON) tools/campaign.py teardown 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+
+LOADGEN_IMAGE_REF ?= registry.runpod.net/ashwinsreedhar28-emberserve-main-deploy-runpod-dockerfile-qwen3:038a1a253
+loadgen-create: $(SF_VENV)/.installed
+	$(SF_PYTHON) tools/runpod_endpoint.py create --name loadgen-4090-fbon-baked --image "$(LOADGEN_IMAGE_REF)" \
+	  --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT --idle 10 --max 1 --disk 5 --env MAX_CONCURRENCY=64 --env LAKEHOUSE_CELL=loadgen $(if $(DRY),--dry-run,)
+
+loadgen-off:
+	$(SF_PYTHON) tools/runpod_endpoint.py off "$(LOADGEN_ENDPOINT)"
+
+loadgen-on:
+	$(SF_PYTHON) tools/runpod_endpoint.py on "$(LOADGEN_ENDPOINT)" --max 1
 
 sf-clean:
 	rm -rf snowflake/dbt/target snowflake/dbt/logs snowflake/dbt/dbt_packages

@@ -1,6 +1,6 @@
 # Snapshot the Runpod account every 30 minutes and PUT the snapshot to the Snowflake stage @RUNPOD (no warehouse needed).
 # Loading + dbt happen in runpod-load.yml on a slower cadence so the warehouse is not resumed 48 times a day.
-# One-time setup — repository secrets: RUNPOD_API_KEY (a read-only key is enough), SNOWFLAKE_ACCOUNT (e.g. ab12345.us-east-2.aws),
+# One-time setup — repository secrets — RUNPOD_API_KEY (a read-only key is enough), SNOWFLAKE_ACCOUNT (e.g. ab12345.us-east-2.aws),
 # SNOWFLAKE_USER (the SERVICE user), SNOWFLAKE_PRIVATE_KEY (the PEM text of ~/.snowflake/lakehouse_rsa_key.p8).
 name: runpod-poll
 on:

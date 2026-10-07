@@ -31,6 +31,8 @@ models:
       +schema: GOLD
     runpod:
       +tags: [runpod]
+    campaign:
+      +tags: [campaign]
 
 seeds:
   serverless_lakehouse:

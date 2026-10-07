@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: silver_campaign_requests
+    columns:
+      - name: campaign_kind
+        tests: [not_null, {accepted_values: {arguments: {values: ["campaign", "loadgen"]}}}]
+      - name: slot_utc
+        tests: [{accepted_values: {arguments: {values: ["00-06", "06-12", "12-18", "18-24"]}}}]
+  - name: gold_campaign_placement_wait
+    columns:
+      - name: n_cold_ok
+        tests: [not_null]
+  - name: gold_campaign_flashboot_vs_idle
+    columns:
+      - name: hit_rate
+        tests: [not_null]
+  - name: gold_campaign_cost_by_gpu_image
+    columns:
+      - name: endpoint_id
+        tests: [not_null, unique]

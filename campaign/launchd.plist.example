@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Campaign slots, four times a day (UTC 02:10, 08:10, 14:10, 20:10 ≈ 22:10, 04:10, 10:10, 16:10 Eastern), one cold start per cell per slot.
+     Install: sed "s|__REPO__|$HOME/serverless-lakehouse|" campaign/launchd.plist.example > ~/Library/LaunchAgents/com.lakehouse.campaign.plist
+              launchctl load ~/Library/LaunchAgents/com.lakehouse.campaign.plist
+     Stop:    launchctl unload ~/Library/LaunchAgents/com.lakehouse.campaign.plist   (and `make campaign-teardown` to delete the endpoints)
+     The Mac must be awake at those times (System Settings → Battery → prevent sleep on power, or `caffeinate`). The key comes from
+     snowflake/.env (RUNPOD_API_KEY_RW) through make, never from this file. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.lakehouse.campaign</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>-lc</string><string>cd __REPO__ && make campaign-slot >> snowflake/logs/campaign-launchd.log 2>&1</string></array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>10</integer></dict>
+  </array>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
