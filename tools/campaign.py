@@ -12,6 +12,11 @@ cold-start script and the existing landing path. Nothing here runs load code of 
                                                      campaign/runs.csv gets a row per cell, then the 20 % spend check
     python tools/campaign.py status                  endpoints, cold starts done per cell, $ so far
     python tools/campaign.py teardown                DELETE every campaign endpoint (the end-of-stage rule)
+    python tools/campaign.py park                    workers.max = 0 on every campaign endpoint (nothing can start; keep configs)
+    python tools/campaign.py unpark                  workers.max = 1 again
+
+A cold request waits up to 30 min (--timeout-s 1800): a long placement wait on a saturated pool is a result (`delay_ms`),
+not a failure. Throttled workers are not billed.
 
 Keys: RUNPOD_API_KEY_RW (write). Cells and prices live in campaign/grid.json; `plan` is the estimate you approve before
 `create`. `slot` refuses to run when the spend check fails, when a cell has already reached its planned cold starts, or
@@ -153,7 +158,7 @@ def cold_starts_done(cell: str) -> int:
 def run_cell(cell: str, ep: dict, n_cold: int, key: str, timeline: bool, stamp: str) -> tuple[str, int, str]:
     out = OUT_DIR / f"serverless_coldstart_{cell}_{stamp}.json"
     cmd = [sys.executable, str(COLDSTART), "--mode", "queue", "--endpoint", ep["endpoint_id"], "--api-key", key,
-           "--repeats", str(n_cold), "--idle-s", "0", "--zero-wait-s", "300", "--max-tokens", "16", "--timeout-s", "900",
+           "--repeats", str(n_cold), "--idle-s", "0", "--zero-wait-s", "300", "--max-tokens", "16", "--timeout-s", "1800",
            "--label", cell, "--image", ep["image"], "--note", f"campaign slot {stamp}; {ep['gpu_type']}; flashboot {ep['flashboot']}",
            "--out", str(out)]
     if timeline:
@@ -206,6 +211,15 @@ def cmd_slot(a) -> int:
     return 0 if all(rc == 0 for _, rc, _ in results) else 1
 
 
+def cmd_park(a, max_workers: int = 0) -> int:
+    for cell, ep in load_endpoints().items():
+        if ep.get("deleted_at"):
+            continue
+        rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", {"workers": {"min": 0, "max": max_workers}})
+        print(f"  {cell}: workers.max = {max_workers}")
+    return 0
+
+
 def cmd_status(a) -> int:
     eps = load_endpoints()
     for cell, ep in eps.items():
@@ -237,8 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--skip-spend-check", action="store_true")
     sub.add_parser("status")
     sub.add_parser("teardown")
+    sub.add_parser("park")
+    sub.add_parser("unpark")
     a = ap.parse_args(argv)
-    return {"plan": cmd_plan, "create": cmd_create, "slot": cmd_slot, "status": cmd_status, "teardown": cmd_teardown}[a.cmd](a)
+    return {"plan": cmd_plan, "create": cmd_create, "slot": cmd_slot, "status": cmd_status, "teardown": cmd_teardown,
+            "park": cmd_park, "unpark": lambda a: cmd_park(a, 1)}[a.cmd](a)
 
 
 if __name__ == "__main__":

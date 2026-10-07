@@ -39,7 +39,7 @@
 #   make campaign-plan             price the grid (campaign/grid.json) → campaign/estimate.csv; no API call, no spend
 #   make campaign-create           create one endpoint per cell (+ seed rows); campaign-create DRY=1 only prints the bodies
 #   make campaign-slot [N_COLD=1]  one cold start per cell, all cells concurrently, then land --only runpod + spend check
-#   make campaign-status / campaign-teardown   progress; DELETE every campaign endpoint
+#   make campaign-status / campaign-park / campaign-unpark / campaign-teardown   progress; max workers 0 / 1; DELETE every campaign endpoint
 #   make loadgen-create            the load generator's endpoint (4090 PRO, FlashBoot on, baked image, idle 10 s, max 1)
 #   make loadgen-off / loadgen-on  kill switch: workers.max 0 / 1 (LOADGEN_ENDPOINT in snowflake/.env)
 #
@@ -68,7 +68,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: sf-spend campaign-plan campaign-create campaign-slot campaign-status campaign-teardown loadgen-create loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: campaign-park campaign-unpark sf-spend campaign-plan campaign-create campaign-slot campaign-status campaign-teardown loadgen-create loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -262,6 +262,9 @@ campaign-create: $(SF_VENV)/.httpx
 
 campaign-slot: $(SF_VENV)/.httpx $(SF_LOGS)
 	$(SF_PYTHON) tools/campaign.py slot --n-cold $(N_COLD) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+
+campaign-park campaign-unpark:
+	$(SF_PYTHON) tools/campaign.py $(subst campaign-,,$@)
 
 campaign-status:
 	$(SF_PYTHON) tools/campaign.py status

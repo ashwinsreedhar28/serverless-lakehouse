@@ -8,7 +8,7 @@ measurement campaign and the load generator need, with every cost-relevant setti
     python tools/runpod_endpoint.py off <id>        workers.max = 0 (kill switch: nothing can start, nothing is billed)
     python tools/runpod_endpoint.py on <id> [--max 1]
     python tools/runpod_endpoint.py delete <id>     the end-of-stage rule: every campaign endpoint is deleted, not paused
-    python tools/runpod_endpoint.py show <id>
+    python tools/runpod_endpoint.py show <id> | workers <id> | purge <id>
 
 Needs RUNPOD_API_KEY_RW (a key with write permission; the read-only RUNPOD_API_KEY cannot create or delete). Every
 endpoint this tool creates is named `lh-…` and tagged in `env.LAKEHOUSE=1`, so `list --mine` and the spend log can tell
@@ -35,9 +35,12 @@ def key() -> str:
     return k
 
 
-def call(method: str, path: str, body: dict | None = None) -> dict | list:
+JOBS = "https://api.runpod.ai"
+
+
+def call(method: str, path: str, body: dict | None = None, base: str = REST) -> dict | list:
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(REST + path, data=data, method=method,
+    req = urllib.request.Request(base + path, data=data, method=method,
                                  headers={"Authorization": f"Bearer {key()}", "Content-Type": "application/json",
                                           "Accept": "application/json", "User-Agent": "serverless-lakehouse/runpod_endpoint"})
     try:
@@ -98,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("on"); p.add_argument("id"); p.add_argument("--max", type=int, default=1)
     p = sub.add_parser("delete"); p.add_argument("id")
     p = sub.add_parser("show"); p.add_argument("id")
+    p = sub.add_parser("workers"); p.add_argument("id", help="active workers + /health counters (what the console's Workers tab shows)")
+    p = sub.add_parser("purge"); p.add_argument("id", help="POST /purge-queue: drop every queued job (in-progress jobs are not cancelled)")
     p = sub.add_parser("list"); p.add_argument("--mine", action="store_true", help="only endpoints this tool created (env.LAKEHOUSE=1)")
     a = ap.parse_args(argv)
 
@@ -147,6 +152,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if a.cmd == "show":
         print(json.dumps(call("GET", f"/v2/serverless/{a.id}"), indent=1))
+        return 0
+    if a.cmd == "workers":
+        w = call("GET", f"/v2/serverless/{a.id}/workers")
+        print("summary:", json.dumps(w.get("summary")))
+        for x in w.get("workers", []):
+            print(f"  {x['id']:<16} {x['status']:<13} {str(x.get('gpuTypeId')):<28} {str(x.get('dataCenterId')):<9} started {x.get('startedAt')}  uptime {x.get('uptimeSeconds')}s")
+        print("health: ", json.dumps(call("GET", f"/v2/{a.id}/health", base=JOBS)))
+        return 0
+    if a.cmd == "purge":
+        print(json.dumps(call("POST", f"/v2/{a.id}/purge-queue", {}, base=JOBS)))
         return 0
     if a.cmd == "list":
         out = call("GET", "/v2/serverless?limit=1000")
