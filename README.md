@@ -106,7 +106,7 @@ lakehouse/
 dataset/                    dataset card for the landing zone as a Hugging Face dataset (`make dataset-create`; data/landing + gold snapshot)
 space-static/               the Hugging Face Space (static SDK): README.md (Space card); index.html = docs/dashboard.html, copied at upload
 space/                      Streamlit app: app.py, requirements.txt, Dockerfile, README.md (Docker Space card), data/gold.json — local via `make space`
-.github/workflows/          ci.yml — pytest + gitleaks on every push; sync-space.yml — uploads the static dashboard to the Space when it changes (needs HF_SPACE set)
+.github/workflows/          ci.yml — pytest + gitleaks on every push; sync-space.yml — static dashboard → Space; runpod-poll.yml (30 min) · runpod-load.yml (3 h: land, bronze, dbt, spend log) · loadgen.yml (hourly, LOADGEN=on)
 seeds/                      hand-curated dimensions: coldstart_series.csv (engine/model/GPU/FlashBoot per series),
                             gpu_labels.csv (tier, GPU model, $/hr per label), coldstart_run_notes.csv (host state per run),
                             coldstart_request_overrides.csv (GPU placement that differed from the typed label);
@@ -115,6 +115,14 @@ docs/gold_report.md         the gold tables rendered as markdown by `make report
 docs/dashboard.html         the static dashboard rendered by `make dashboard`
 scripts/check_secrets.py    scan tracked/staged files (index blobs, NUL-separated paths, bytes incl. UTF-16); exit 1 on any hit
 scripts/audit_bundle.py     one file with every source + doc for an outside reviewer (audit/AUDIT_PROMPT.md is the brief)
+lakehouse/sf/               Snowflake backend: setup · bronze (PUT + COPY INTO + FLATTEN + ledger) · verify · show · parity · runpod (API snapshots) · spend
+snowflake/                  setup.sql, dbt/ (32 models, 4 seeds from seeds/, 95 tests), env.example, README.md
+tools/                      runpod_poll.py (API snapshots), runpod_endpoint.py (create/off/delete), campaign.py (the measurement grid),
+                            serverless_coldstart.py (vendored from emberserve, unchanged)
+campaign/                   grid.json (cells + prices), estimate.csv (approved), runs.csv (what ran), endpoints.json, launchd.plist.example
+data/sources/runpod/        runs made by this repo's tooling (loadgen/, campaign/), the third landing root (`make land --only runpod`)
+docs/parity_report.md       Snowflake gold vs Spark gold, table by table (`make sf-parity`)
+docs/spend_log.md           Runpod $ per endpoint per day vs the campaign / load-generator estimates (`make sf-spend`)
 .githooks/pre-commit        refuses .env / *.env / data/lakehouse paths, then runs check_secrets --staged
 tests/                      redaction shapes; landing ↔ manifest consistency; seed CSV integrity; end-to-end snapshot
                             scenarios (revert, rename, empty file, ledger repair, partial ingest, --force); UTC rendering
@@ -302,6 +310,53 @@ experiment, so they describe what happened, not an engine-only speed-up.
     that shows only one of them reads as a contradiction to anyone holding the other. Host state is a per-run
     fact that neither the files nor the series carry, so it lives in `seeds/coldstart_run_notes.csv` with a
     source per row; runs without a row are `unknown`, never guessed.
+
+## Second backend: Snowflake + dbt
+
+The same landing zone, loaded into Snowflake with `COPY INTO` and modelled with dbt, with a parity check that the eight
+gold tables come out identical to the Spark ones (`docs/parity_report.md`: 8 of 8 match, row for row). The Spark pipeline
+is unchanged; `snowflake/README.md` has the setup and the `make sf-*` targets. Layers and the idempotency key are the same;
+what each system did for me differs:
+
+| | Spark + Delta (`lakehouse/`) | Snowflake + dbt (`lakehouse/sf/`, `snowflake/dbt/`) |
+|---|---|---|
+| landing → bronze | Python readers build record rows, `append` to Delta | `PUT` to an internal stage under `<sha256[:12]>/<path>`, one `COPY INTO` per file; the emberserve JSON lands whole (`VARIANT`) and `INSERT … LATERAL FLATTEN` carves out series/runs/sweeps, because a COPY transformation cannot FLATTEN |
+| "already loaded?" | my ledger: (path, sha256) in the table ∪ `bronze_ingest_log` | the same ledger **and** Snowflake's load history: `COPY INTO … FORCE=FALSE` refuses a stage object it has loaded (64 days). The sha in the stage path makes the two agree on what "the same file" is. `verify` prints both: 47 file loads in `COPY_HISTORY`, 87 ledger appends — the extra 40 are the FLATTEN inserts no COPY ever saw, which is exactly why the ledger still exists |
+| row-count check | `make verify`: plain-Python counts vs Delta | the same check three times: at COPY time (`rows_loaded` vs the expected count), `make sf-verify`, and the dbt test `assert_bronze_row_counts_match_landing` |
+| snapshot selection | silver joins bronze to the manifest's (path, sha) pairs | `LANDING.MANIFEST_SNAPSHOT` (one row per file × expected table) + a `current_snapshot()` macro; `assert_snapshot_in_bronze` refuses an incomplete bronze the way `silver.py` does |
+| silver / gold | DataFrame code, `overwrite` | 19 dbt models (table materialisation), the four seeds loaded by `dbt seed` from `seeds/` |
+| invariants | 28 pytest tests, 9 of them real Spark runs of revert / rename / empty / `--force` scenarios | 72 dbt tests: generic ones for the enums and keys, 12 singular SQL tests for the data-level invariants (one ingest per file version, pulse CSV dedupe, cohorts sum to pooled, boot segmentation, UTC instants, seeds that matched nothing). The scenario tests have no dbt equivalent: they need a fixture landing zone and a pipeline run, which stays pytest's job |
+| medians | `percentile_approx` (observed value at rank ⌈q·n⌉) | `PERCENTILE_DISC`, the same element — the parity check is what proves it |
+| timestamps | session zone UTC; `date_format … 'Z'` on the JVM before `collect()` | `TIMESTAMP_NTZ` holding UTC, `CONVERT_TIMEZONE` at parse time; the console export's `GMT-0400`, the API's ISO `Z` and the laptop-local endpoint logs all through `TO_TIMESTAMP_TZ` / `CONVERT_TIMEZONE` |
+| versions of a table | Delta log (`DESCRIBE HISTORY`, `versionAsOf`) | Time Travel (`AT(OFFSET …)`, 90 days on Enterprise) — nothing in the pipeline uses either; bronze is append-only and silver/gold are rebuilt |
+| schema drift | `mergeSchema` on append | `ALTER TABLE ADD COLUMN` from the CSV header before its COPY |
+| cost of a run | a laptop | X-Small warehouse, auto-suspend 60 s, a resource monitor at 20 credits; `make sf-show` prints the credits used so far (the port itself was a few) |
+
+What was easier on Snowflake: no JVM, no Java version, no `PYSPARK_PYTHON` pinning (audit round 3 was a day of that); dbt's
+`relationships` / `accepted_values` tests replaced a dozen lines of print-and-check; `COPY_HISTORY` gave the load
+bookkeeping for free, and `TO_TIMESTAMP_TZ` with an explicit mask read the console format in one call. What was harder:
+`REGEXP_LIKE` anchors the whole string (Spark's `rlike` searches), reserved words (`rows`), `$$`-quoted regexes cannot
+end in `$`, JSON `NaN` literals load fine into `VARIANT` but the question had to be checked, and the record-grained bronze
+needed the extra FLATTEN hop. The parity check caught none of those as number differences — every mismatch it ever
+reported was a `Decimal` vs `float` artifact in my own comparator — which says the two dialects agree once the semantics
+(`PERCENTILE_DISC`, null-preserving boolean sums, microsecond epoch truncation) are matched on purpose.
+
+### Live source: the Runpod API
+
+`tools/runpod_poll.py` snapshots the account every 30 minutes from a GitHub Actions schedule (endpoints and their
+configuration, the active workers, each endpoint's `/health` counters, release history, 48 h of hourly billing) and `PUT`s
+the document to `@RUNPOD`; every 3 hours `lakehouse.sf.runpod load` COPYs the new snapshots into `bronze_runpod_polls`
+(Snowflake's load history is the only "already loaded" check there — the contrast case) and dbt builds nine models from
+them: endpoints, workers, worker *events* (derived by diffing consecutive polls: `appeared` / `disappeared` /
+`status_changed`), health, hourly billing, job look-ups, and two gold tables — `gold_runpod_endpoint_daily` and
+`gold_runpod_flashboot_check`, which puts the API's `flashboot` setting beside what the benchmark seeds assumed per
+endpoint. There is no "list jobs" API and no REST equivalent of the console's metrics tab, so per-job data comes only from
+the things that submit jobs: the hourly load generator (`.github/workflows/loadgen.yml`, one cold + one warm request
+through the vendored `tools/serverless_coldstart.py`, committed to `data/sources/runpod/loadgen/`) and the measurement
+campaign (`tools/campaign.py`: GPU × FlashBoot × image cells, each its own endpoint created from an existing image, cold
+starts spread over four UTC slots a day, `campaign/estimate.csv` approved before `create`, `docs/spend_log.md` from
+Runpod's own billing records with a 20 % overrun stop). Both land through `make land --only runpod`, the same
+`coldstart_series` format and the same bronze tables, so the Spark side picks them up on the next `make all`.
 
 ## Audit
 

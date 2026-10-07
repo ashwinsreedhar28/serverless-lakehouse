@@ -28,6 +28,12 @@ def main(argv: list[str] | None = None) -> int:
             r = run(cur, f"SELECT COUNT(*), COUNT(DISTINCT source_file || source_sha256), COUNT(DISTINCT run_label), "
                          f"TO_CHAR(MAX(ingested_at), 'YYYY-MM-DD HH24:MI:SS') FROM BRONZE.{t}")[0]
             print(f"{t:<34} {r[0]:>8,} {r[1]:>6} {r[2]:>10}  {r[3]}")
+        try:
+            cr = run(cur, "SELECT ROUND(SUM(credits_used), 3), MIN(start_time)::date FROM TABLE(LAKEHOUSE.information_schema.warehouse_metering_history("
+                          "DATEADD(day, -30, CURRENT_TIMESTAMP()), CURRENT_TIMESTAMP(), 'LAKEHOUSE_WH'))")[0]
+            print(f"\ncredits used by LAKEHOUSE_WH since {cr[1]}: {cr[0]} (trial grants $400 ≈ 100–130 credits depending on edition)")
+        except Exception as e:      # MONITOR on the warehouse not granted yet (re-run `make sf-setup`)
+            print(f"\ncredits used: not readable ({str(e).splitlines()[0][:80]})")
         if args.stage:
             print("\n@LANDING:")
             for row in run(cur, "LIST @LAKEHOUSE.LANDING.LANDING"):
