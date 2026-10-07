@@ -181,7 +181,7 @@ clean:
 	rm -rf data/lakehouse spark-warehouse metastore_db derby.log
 
 # ------------------------------------------------------------------------------------------------------------------
-# Snowflake backend. Credentials come from snowflake/.env (gitignored; see snowflake/.env.example): the Python loader
+# Snowflake backend. Credentials come from snowflake/.env (gitignored; see snowflake/env.example): the Python loader
 # and dbt read the same variables. Separate venv so the Spark pins and the connector/dbt pins never fight.
 # ------------------------------------------------------------------------------------------------------------------
 SF_VENV   ?= .venv-sf
@@ -204,7 +204,7 @@ $(SF_LOGS):
 	mkdir -p $(SF_LOGS)
 
 sf-setup: python-check $(SF_VENV)/.installed $(SF_LOGS)
-	@[ -f snowflake/.env ] || { echo "snowflake/.env missing: cp snowflake/.env.example snowflake/.env and fill it in"; exit 1; }
+	@[ -f snowflake/.env ] || { echo "snowflake/.env missing: cp snowflake/env.example snowflake/.env and fill it in"; exit 1; }
 	$(SF_PYTHON) -m lakehouse.sf.setup 2>&1 | tee $(SF_LOGS)/sf-setup.log; exit $${PIPESTATUS[0]}
 	cd snowflake/dbt && ../../$(SF_DBT) debug --no-use-colors 2>&1 | tee ../../$(SF_LOGS)/dbt-debug.log; exit $${PIPESTATUS[0]}
 

@@ -43,7 +43,7 @@ def load_env(path: Path = ENV_FILE) -> dict[str, str]:
     cfg = {k: os.environ.get(k, d) for k, d in DEFAULTS.items()}
     for k in ("SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER"):
         if not os.environ.get(k):
-            raise SystemExit(f"{k} is not set; copy snowflake/.env.example to snowflake/.env and fill it in")
+            raise SystemExit(f"{k} is not set; copy snowflake/env.example to snowflake/.env and fill it in")
         cfg[k] = os.environ[k]
     cfg["SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"] = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", "")
     return cfg

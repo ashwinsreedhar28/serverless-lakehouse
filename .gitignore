@@ -37,3 +37,4 @@ snowflake/logs/
 snowflake/dbt/target/
 snowflake/dbt/logs/
 snowflake/dbt/dbt_packages/
+snowflake/dbt/.user.yml

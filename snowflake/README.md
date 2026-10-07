@@ -9,7 +9,7 @@ snowflake/setup.sql        warehouse (X-Small, auto-suspend 60 s, 20-credit moni
                            schemas, internal stages @LANDING @PARITY @RUNPOD, file formats, LAKEHOUSE_ROLE
 lakehouse/sf/              the loader: setup.py, bronze.py (PUT + COPY INTO + FLATTEN + ledger), verify.py, show.py, parity.py
 snowflake/dbt/             dbt project: silver + gold models, seeds from ../../seeds, generic + singular tests
-snowflake/.env.example     credentials template → snowflake/.env (gitignored)
+snowflake/env.example     credentials template → snowflake/.env (gitignored)
 snowflake/logs/            every make sf-* target tees its output here (gitignored)
 ```
 
@@ -26,7 +26,7 @@ snowflake/logs/            every make sf-* target tees its output here (gitignor
    ```
    In a Snowsight SQL editor as ACCOUNTADMIN: `ALTER USER "<CURRENT_USER()>" SET RSA_PUBLIC_KEY='MIIB…';` and check
    `DESCRIBE USER "<name>"` shows `HAS_KEYPAIR true`.
-3. `cp snowflake/.env.example snowflake/.env`, fill in account identifier (`<account>.<region>`, e.g. `ab12345.us-east-2`)
+3. `cp snowflake/env.example snowflake/.env`, fill in the account identifier (`<locator>.<region>.<cloud>`, e.g. `ab12345.us-east-2.aws` — the cloud segment is required outside AWS us-west-2)
    and user name.
 4. `make sf-setup` — creates `.venv-sf`, runs `snowflake/setup.sql` as ACCOUNTADMIN, grants LAKEHOUSE_ROLE to your user,
    then `dbt debug`.
