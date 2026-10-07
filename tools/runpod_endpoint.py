@@ -49,17 +49,18 @@ def call(method: str, path: str, body: dict | None = None) -> dict | list:
 
 
 def catalog(filter_text: str | None = None) -> list[dict]:
-    out = call("GET", "/v2/catalog/gpus?product=SERVERLESS")
-    gpus = out.get("gpus", out) if isinstance(out, dict) else out
+    # GET /v2/catalog/gpus: `gpus[]` with id ("NVIDIA GeForce RTX 4090"), name ("RTX 4090"), pool (serverless pool id or null),
+    # memory (GB), price.serverless ($/hr list rate for the pool); include=AVAILABILITY adds availability per product.
+    out = call("GET", "/v2/catalog/gpus?include=AVAILABILITY&product=SERVERLESS")
+    gpus = out.get("gpus", []) if isinstance(out, dict) else out
     rows = []
     for g in gpus:
-        name = g.get("displayName") or g.get("name") or g.get("id")
+        if not g.get("pool"):
+            continue                         # not offered on Serverless
         if filter_text and filter_text.lower() not in json.dumps(g).lower():
             continue
-        rows.append({"id": g.get("id"), "name": name, "pool": g.get("pool") or g.get("poolId"),
-                     "memory_gb": g.get("memoryInGb") or g.get("memory"),
-                     "price_hr": (g.get("pricing") or {}).get("serverless") or g.get("serverlessPrice") or g.get("price"),
-                     "raw": g})
+        rows.append({"id": g.get("id"), "name": g.get("name"), "pool": g.get("pool"), "memory_gb": g.get("memory"),
+                     "price_hr": (g.get("price") or {}).get("serverless"), "availability": g.get("availability"), "raw": g})
     return rows
 
 
@@ -102,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if a.cmd == "catalog":
         for r in catalog(a.gpu):
-            print(f"  {str(r['pool']):<14} {str(r['id']):<36} {str(r['name']):<32} {r['memory_gb']} GB  ${r['price_hr']}/hr")
+            print(f"  {str(r['pool']):<14} {str(r['id']):<36} {str(r['name']):<20} {str(r['memory_gb']):>4} GB  ${r['price_hr']}/hr  {r['availability']}")
         return 0
     if a.cmd == "create":
         pool, exclude, g = resolve_gpu(a.gpu)
