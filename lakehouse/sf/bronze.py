@@ -74,7 +74,7 @@ for _t, _cols in CSV_COLUMNS.items():
     TABLE_DDL[_t] = ", ".join(f"{c} STRING" for c in _cols)
 
 LEDGER_DDL = ("run_label STRING NOT NULL, table_name STRING NOT NULL, source_file STRING NOT NULL, source_sha256 STRING NOT NULL, "
-              "rows NUMBER NOT NULL, ingested_at TIMESTAMP_NTZ NOT NULL, reconciled BOOLEAN NOT NULL, loader STRING, copy_status STRING")
+              "n_rows NUMBER NOT NULL, ingested_at TIMESTAMP_NTZ NOT NULL, reconciled BOOLEAN NOT NULL, loader STRING, copy_status STRING")
 
 BRONZE_TABLES = tuple(TABLE_DDL) + ("bronze_ingest_log",)
 STAGE = "@LAKEHOUSE.LANDING.LANDING"
@@ -274,7 +274,7 @@ def reconcile_ingest_log(cur, run_label: str, ingested_at: datetime) -> int:
     fixed = 0
     for t in TABLE_DDL:
         run(cur, f"""
-            INSERT INTO BRONZE.bronze_ingest_log (run_label, table_name, source_file, source_sha256, rows, ingested_at, reconciled, loader, copy_status)
+            INSERT INTO BRONZE.bronze_ingest_log (run_label, table_name, source_file, source_sha256, n_rows, ingested_at, reconciled, loader, copy_status)
             SELECT {lit(run_label)}, {lit(t)}, d.source_file, d.source_sha256, COUNT(*), COALESCE(MIN(d.ingested_at), {ts_lit(ingested_at)}), TRUE, 'reconciled', NULL
             FROM BRONZE.{t} d
             LEFT JOIN BRONZE.bronze_ingest_log l

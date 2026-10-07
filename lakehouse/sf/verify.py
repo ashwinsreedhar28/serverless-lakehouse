@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
                             f"FROM TABLE(LAKEHOUSE.information_schema.copy_history(TABLE_NAME => 'BRONZE.{t.upper()}', "
                             f"START_TIME => DATEADD(day, -14, CURRENT_TIMESTAMP())))")
             n_copy += rows[0][0] or 0
-        ledger = run(cur, "SELECT COUNT(*), SUM(rows), SUM(IFF(reconciled, 1, 0)), SUM(IFF(loader = 'copy_into', 1, 0)) FROM BRONZE.bronze_ingest_log")[0]
+        ledger = run(cur, "SELECT COUNT(*), SUM(n_rows), SUM(IFF(reconciled, 1, 0)), SUM(IFF(loader = 'copy_into', 1, 0)) FROM BRONZE.bronze_ingest_log")[0]
         print(f"  load history (COPY_HISTORY, 14 d): {n_copy} file loads   ledger: {ledger[0]} appends, {ledger[1]:,} rows, "
               f"{ledger[3]} by COPY INTO, {ledger[2]} reconciled")
         return 0 if bad == 0 else 1
