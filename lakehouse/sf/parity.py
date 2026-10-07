@@ -19,7 +19,8 @@ import json
 import math
 import sys
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from ..config import GOLD_TABLES, REPO_ROOT
@@ -41,7 +42,9 @@ ABS_TOL = 1e-9
 
 
 def norm(v):
-    """Same shape lakehouse.dashboard.jsonable gives the Spark side."""
+    """Same shape lakehouse.dashboard.jsonable gives the Spark side. Snowflake NUMBER columns arrive as Decimal."""
+    if isinstance(v, Decimal):
+        v = float(v)
     if isinstance(v, float):
         if math.isnan(v):
             return None
@@ -138,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         results = []
         report = [f"# Parity: Snowflake gold vs Spark gold", "",
                   f"Spark side: `{args.spark_json.relative_to(REPO_ROOT)}` (built {payload['meta']['built_at_utc']}). "
-                  f"Snowflake side: `LAKEHOUSE.GOLD` read {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}. "
+                  f"Snowflake side: `LAKEHOUSE.GOLD` read {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}. "
                   f"Floats compared within {REL_TOL:g} relative; timestamps at second precision; NaN ≡ null; arrays element-wise.", ""]
         for name in GOLD_TABLES:
             spark_rows = [{k: norm(v) for k, v in r.items()} for r in payload[name]]
