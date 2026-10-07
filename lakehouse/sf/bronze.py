@@ -117,6 +117,8 @@ def ensure_tables(cur) -> None:
     for t, ddl in TABLE_DDL.items():
         run(cur, f"CREATE TABLE IF NOT EXISTS BRONZE.{t} ({ddl}, {LINEAGE_DDL})")
     run(cur, f"CREATE TABLE IF NOT EXISTS BRONZE.bronze_ingest_log ({LEDGER_DDL})")
+    # the Runpod snapshot table too (lakehouse.sf.runpod fills it), so the dbt runpod models can build before the first poll
+    run(cur, f"CREATE TABLE IF NOT EXISTS BRONZE.bronze_runpod_polls (doc VARIANT NOT NULL, {LINEAGE_DDL})")
 
 
 def table_columns(cur, table: str) -> list[str]:

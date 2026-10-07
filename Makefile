@@ -26,7 +26,7 @@
 #   make sf-setup                  one-time: .venv-sf (snowflake-connector + dbt-snowflake), run snowflake/setup.sql
 #   make sf-bronze [RUN_LABEL=...] PUT landing → @LANDING, COPY INTO bronze, FLATTEN the JSON docs, write the ledger
 #   make sf-verify                 row counts per (file, table) vs. plain-Python counts of the landed files
-#   make sf-silver-gold            dbt seed + dbt build (silver, gold, and every dbt test)
+#   make sf-silver-gold            dbt seed + dbt build (silver, gold, and every dbt test; the runpod models run in sf-runpod-load)
 #   make sf-parity                 Snowflake gold vs. space/data/gold.json (the Spark gold export) → docs/parity_report.md
 #   make sf-all                    sf-bronze → sf-verify → sf-silver-gold → sf-parity
 #   make sf-show                   bronze rows / files / ledger (+ stage listing with SF_SHOW_STAGE=1)
@@ -187,7 +187,7 @@ clean:
 # and dbt read the same variables. Separate venv so the Spark pins and the connector/dbt pins never fight.
 # ------------------------------------------------------------------------------------------------------------------
 SF_VENV   ?= .venv-sf
-SF_PYTHON := $(SF_VENV)/bin/python
+SF_PYTHON := $(SF_VENV)/bin/python -u
 SF_DBT    := $(SF_VENV)/bin/dbt
 SF_LOGS   := snowflake/logs
 -include snowflake/.env
@@ -218,7 +218,7 @@ sf-verify: $(SF_VENV)/.installed $(SF_LOGS)
 
 sf-silver-gold: $(SF_VENV)/.installed $(SF_LOGS)
 	cd snowflake/dbt && ../../$(SF_DBT) seed --no-use-colors 2>&1 | tee ../../$(SF_LOGS)/dbt-seed.log; exit $${PIPESTATUS[0]}
-	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors $(DBT_FLAGS) 2>&1 | tee ../../$(SF_LOGS)/dbt-build.log; exit $${PIPESTATUS[0]}
+	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors --exclude tag:runpod $(DBT_FLAGS) 2>&1 | tee ../../$(SF_LOGS)/dbt-build.log; exit $${PIPESTATUS[0]}
 
 sf-dbt-test: $(SF_VENV)/.installed $(SF_LOGS)
 	cd snowflake/dbt && ../../$(SF_DBT) test --no-use-colors $(DBT_FLAGS) 2>&1 | tee ../../$(SF_LOGS)/dbt-test.log; exit $${PIPESTATUS[0]}
