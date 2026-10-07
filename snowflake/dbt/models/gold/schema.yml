@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: gold_coldstart_by_gpu_image
+    columns:
+      - name: n
+        tests: [not_null]
+      - name: gpu_model
+        tests: [not_null]
+  - name: gold_flashboot_hit_rate
+    columns:
+      - name: n_cold
+        tests: [not_null]
+      - name: hit_threshold_ms
+        tests: [{accepted_values: {arguments: {values: [5000], quote: false}}}]
+  - name: gold_engine_comparison
+    columns:
+      - name: scope
+        tests: [not_null, {accepted_values: {arguments: {values: ["pooled", "cohort"]}}}]
+      - name: cohort
+        tests: [not_null]
+  - name: gold_worker_boot_phases
+    columns:
+      - name: boot_index
+        tests: [not_null]
+      - name: segmented_by
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Starting vLLM: (wrapper)", "Initializing a V1 LLM engine (no wrapper line captured)", "none (log starts mid-boot)"]
+  - name: gold_cost_per_job
+    columns:
+      - name: price_per_hr_usd
+        tests: [not_null]
+  - name: gold_scoring_cost_per_batch
+    columns:
+      - name: batch_id
+        tests: [not_null, unique]
+  - name: gold_sweep_latency
+    columns:
+      - name: request_rate
+        tests: [not_null]
+  - name: gold_coldstart_events
+    columns:
+      - name: delay_ms
+        tests: [not_null]

@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: >
+      COPY INTO targets written by `python -m lakehouse.sf.bronze` — raw, append-only, one row per natural record, with
+      lineage columns (ingested_at, run_label, source_file, source_sha256, stage_path). Several versions of a landed file
+      may coexist; silver selects the current one through LANDING.MANIFEST_SNAPSHOT.
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'LAKEHOUSE') }}"
+    schema: BRONZE
+    tables:
+      - name: bronze_raw_json
+        description: One emberserve JSON document per row (VARIANT), as COPY INTO loaded it.
+      - name: bronze_coldstart_series
+      - name: bronze_coldstart_runs
+      - name: bronze_sweep_runs
+      - name: bronze_sweep_records
+      - name: bronze_worker_log_lines
+      - name: bronze_pulse_coldstart_requests
+      - name: bronze_pulse_throughput_requests
+      - name: bronze_pulse_quality_requests
+      - name: bronze_pulse_quality_batches
+      - name: bronze_ingest_log
+        description: One row per (run_label, table, source_file, sha256) append, plus rows reconciled from the data tables.
+  - name: landing
+    database: "{{ env_var('SNOWFLAKE_DATABASE', 'LAKEHOUSE') }}"
+    schema: LANDING
+    tables:
+      - name: manifest_snapshot
+        description: >
+          data/landing/manifest.json as a table: one row per landed file × bronze table it feeds, with the expected row
+          count. This is the snapshot silver reads — the (path, sha256) pairs that are current right now.

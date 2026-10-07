@@ -1,0 +1,51 @@
+# serverless-lakehouse silver + gold as dbt models over the Snowflake bronze layer.
+# Run from this directory (or `make sf-silver-gold` from the repo root): dbt seed && dbt build.
+name: serverless_lakehouse
+version: "0.1.0"
+config-version: 2
+profile: serverless_lakehouse
+require-dbt-version: [">=1.8.0", "<2.0.0"]
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+analysis-paths: ["analyses"]
+seed-paths: ["../../seeds"]        # the same committed CSVs the Spark silver reads (seeds/ at the repo root)
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # A "cold" request answered faster than this was served by a FlashBoot resume or a still-warm worker, not a full boot
+  # (lakehouse/config.py FLASHBOOT_HIT_MS). Observed: resumes 0.5–0.9 s; the fastest full boot in the data is 12.6 s.
+  flashboot_hit_ms: 5000
+  # Worker logs copied from the Runpod console carry local (laptop) timestamps in this zone (config.CONSOLE_LOG_TZ).
+  console_log_tz: "America/New_York"
+
+models:
+  serverless_lakehouse:
+    +materialized: table
+    +persist_docs: {relation: true, columns: true}
+    silver:
+      +schema: SILVER
+    gold:
+      +schema: GOLD
+
+seeds:
+  serverless_lakehouse:
+    +schema: SILVER
+    +quote_columns: false
+    coldstart_series:
+      +column_types: {series_label: varchar, engine: varchar, engine_build: varchar, model: varchar, gpu_model: varchar,
+                      flashboot: varchar, flashboot_source: varchar, weights_mode: varchar, image_gb: double, notes: varchar}
+    gpu_labels:
+      +column_types: {gpu_label: varchar, tier: varchar, gpu_model: varchar, price_per_hr_usd: double, evidence: varchar,
+                      source: varchar, notes: varchar}
+    coldstart_run_notes:
+      +column_types: {series_label: varchar, run_index: integer, host_state: varchar, evidence: varchar, note: varchar, source: varchar}
+    coldstart_request_overrides:
+      +column_types: {endpoint_id: varchar, ts_utc: varchar, gpu_label: varchar, evidence: varchar, note: varchar, source: varchar}
+
+tests:
+  serverless_lakehouse:
+    +store_failures: true
+    +schema: SILVER

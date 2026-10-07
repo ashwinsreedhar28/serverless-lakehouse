@@ -1,0 +1,5 @@
+# Snowflake backend: the loader (lakehouse/sf/) and dbt. Installed into .venv-sf by `make sf-setup`.
+snowflake-connector-python==4.8.0
+cryptography>=42
+dbt-core==1.12.5
+dbt-snowflake==1.12.1

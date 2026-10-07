@@ -1,0 +1,109 @@
+version: 2
+
+# Generic tests on silver. Each mirrors something the Spark pipeline asserts in code or in tests/:
+# accepted_values = the enums silver's CASE expressions can produce; relationships (warn) = the "note: label without a
+# seed row" prints in lakehouse.silver.main; not_null = columns gold filters or groups on.
+models:
+  - name: dim_coldstart_series
+    columns:
+      - name: series_label
+        tests: [not_null, unique]
+      - name: engine
+        tests: [{accepted_values: {arguments: {values: ["emberserve", "worker-vllm"]}}}]
+      - name: flashboot
+        tests: [{accepted_values: {arguments: {values: ["on", "off", "unknown"]}}}]
+      - name: weights_mode
+        tests: [{accepted_values: {arguments: {values: ["baked", "fetched"]}}}]
+  - name: dim_gpu_label
+    columns:
+      - name: gpu_label
+        tests: [not_null, unique]
+      - name: evidence
+        tests: [{accepted_values: {arguments: {values: ["observed", "inferred", "unknown"]}}}]
+  - name: dim_coldstart_run_notes
+    columns:
+      - name: host_state
+        tests: [{accepted_values: {arguments: {values: ["fresh_host", "warm_host", "partial_host", "flashboot_resume"]}}}]
+  - name: dim_coldstart_request_overrides
+    columns:
+      - name: gpu_label
+        tests:
+          - relationships: {arguments: {to: ref('dim_gpu_label'), field: gpu_label}}   # an override must point at a known label
+      - name: evidence
+        tests: [{accepted_values: {arguments: {values: ["observed"]}}}]                 # overrides are only for placements someone saw
+
+  - name: silver_coldstart_requests
+    description: One Serverless request (cold or warm) from either source, typed, deduped, joined to the seeds.
+    columns:
+      - name: source
+        tests: [not_null, {accepted_values: {arguments: {values: ["emberserve_results", "pulse_coldstart"]}}}]
+      - name: engine
+        tests: [not_null]
+      - name: kind
+        tests: [not_null, {accepted_values: {arguments: {values: ["cold", "warm"]}}}]
+      - name: flashboot
+        tests: [not_null, {accepted_values: {arguments: {values: ["on", "off", "unknown"]}}}]
+      - name: weights_mode
+        tests: [{accepted_values: {arguments: {values: ["baked", "fetched", "volume"]}}}]
+      - name: host_state
+        tests: [not_null, {accepted_values: {arguments: {values: ["unknown", "fresh_host", "warm_host", "partial_host", "flashboot_resume"]}}}]
+      - name: gpu_label
+        tests:
+          - relationships:
+              arguments: {to: ref('dim_gpu_label'), field: gpu_label}
+              config: {severity: warn}       # Spark prints "gpu labels without a seeds/gpu_labels.csv row"
+      - name: series_label
+        tests:
+          - relationships:
+              arguments: {to: ref('dim_coldstart_series'), field: series_label}
+              config: {severity: warn}       # Spark prints "series without a seeds/coldstart_series.csv row"
+      - name: source_file
+        tests: [not_null]
+      - name: source_sha256
+        tests: [not_null]
+
+  - name: silver_coldstart_phases
+    columns:
+      - name: kind
+        tests: [not_null, {accepted_values: {arguments: {values: ["phase", "mark"]}}}]
+      - name: name
+        tests: [not_null]
+
+  - name: silver_sweep_summaries
+    columns:
+      - name: endpoint_mode
+        tests: [not_null, {accepted_values: {arguments: {values: ["queue", "load_balancer"]}}}]
+      - name: request_rate
+        tests: [not_null]
+      - name: endpoint_id
+        tests: [not_null]       # a regexp that matched "" would leave this null (audit round 1)
+
+  - name: silver_sweep_requests
+    columns:
+      - name: request_id
+        tests: [not_null]
+      - name: success
+        tests: [not_null]
+
+  - name: silver_worker_log_events
+    columns:
+      - name: ts_format
+        tests: [not_null, {accepted_values: {arguments: {values: ["console", "iso", "pipe", "none"]}}}]
+      - name: event_kind
+        tests: [not_null, {accepted_values: {arguments: {values: ["runpod_sdk", "vllm", "progress", "httpx", "wrapper", "blank", "other"]}}}]
+      - name: line_no
+        tests: [not_null]
+
+  - name: silver_scoring_requests
+    columns:
+      - name: batch_id
+        tests: [not_null, {relationships: {arguments: {to: ref('silver_scoring_batches'), field: batch_id}}}]
+      - name: parse_ok
+        tests: [not_null]
+
+  - name: silver_scoring_batches
+    columns:
+      - name: batch_id
+        tests: [not_null, unique]
+      - name: n
+        tests: [not_null]

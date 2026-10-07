@@ -14,6 +14,7 @@ derby.log
 # --- python ---------------------------------------------------------------------
 .venv/
 .venv-space/
+.venv-sf/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -30,3 +31,9 @@ audit/*.md
 space-static/index.html
 # staged copy for `make dataset-push`
 .dataset-stage/
+
+# --- snowflake backend ------------------------------------------------------------
+snowflake/logs/
+snowflake/dbt/target/
+snowflake/dbt/logs/
+snowflake/dbt/dbt_packages/

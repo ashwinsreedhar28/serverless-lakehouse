@@ -1,0 +1,18 @@
+# dbt profile for the Snowflake backend. No secrets here: every value comes from the environment, which the Makefile
+# loads from snowflake/.env (gitignored). Key-pair auth, same key the Python loader uses.
+serverless_lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      private_key_passphrase: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'LAKEHOUSE_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'LAKEHOUSE_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'LAKEHOUSE') }}"
+      schema: SILVER
+      threads: 4
+      client_session_keep_alive: false
+      query_tag: serverless-lakehouse-dbt

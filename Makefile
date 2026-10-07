@@ -22,6 +22,16 @@
 #   make test-fast                 the quick tests only (redaction, landing manifest)
 #   make clean                     delete data/lakehouse/ (landing is kept; it is the committed input)
 #
+# Snowflake backend (second backend over the same data/landing/; snowflake/README.md):
+#   make sf-setup                  one-time: .venv-sf (snowflake-connector + dbt-snowflake), run snowflake/setup.sql
+#   make sf-bronze [RUN_LABEL=...] PUT landing → @LANDING, COPY INTO bronze, FLATTEN the JSON docs, write the ledger
+#   make sf-verify                 row counts per (file, table) vs. plain-Python counts of the landed files
+#   make sf-silver-gold            dbt seed + dbt build (silver, gold, and every dbt test)
+#   make sf-parity                 Snowflake gold vs. space/data/gold.json (the Spark gold export) → docs/parity_report.md
+#   make sf-all                    sf-bronze → sf-verify → sf-silver-gold → sf-parity
+#   make sf-show                   bronze rows / files / ledger (+ stage listing with SF_SHOW_STAGE=1)
+#   Every sf-* target also tees its output to snowflake/logs/<target>.log.
+#
 # Overrides:  EMBERSERVE_DIR, PULSE_DIR (source roots), FORMAT=delta|parquet, RUN_LABEL
 
 SHELL          := /bin/bash
@@ -47,7 +57,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -169,3 +179,55 @@ test-fast: $(VENV)/.installed
 
 clean:
 	rm -rf data/lakehouse spark-warehouse metastore_db derby.log
+
+# ------------------------------------------------------------------------------------------------------------------
+# Snowflake backend. Credentials come from snowflake/.env (gitignored; see snowflake/.env.example): the Python loader
+# and dbt read the same variables. Separate venv so the Spark pins and the connector/dbt pins never fight.
+# ------------------------------------------------------------------------------------------------------------------
+SF_VENV   ?= .venv-sf
+SF_PYTHON := $(SF_VENV)/bin/python
+SF_DBT    := $(SF_VENV)/bin/dbt
+SF_LOGS   := snowflake/logs
+-include snowflake/.env
+export SNOWFLAKE_ACCOUNT SNOWFLAKE_USER SNOWFLAKE_PRIVATE_KEY_PATH SNOWFLAKE_PRIVATE_KEY_PASSPHRASE SNOWFLAKE_ROLE SNOWFLAKE_WAREHOUSE SNOWFLAKE_DATABASE
+# dbt does not expand ~ in private_key_path
+SNOWFLAKE_PRIVATE_KEY_PATH ?= $(HOME)/.snowflake/lakehouse_rsa_key.p8
+export SNOWFLAKE_PRIVATE_KEY_PATH := $(subst ~,$(HOME),$(SNOWFLAKE_PRIVATE_KEY_PATH))
+
+$(SF_VENV)/.installed: snowflake/requirements.txt
+	$(PY) -m venv $(SF_VENV)
+	$(SF_VENV)/bin/pip install --upgrade pip >/dev/null
+	$(SF_VENV)/bin/pip install -r snowflake/requirements.txt
+	@touch $@
+
+$(SF_LOGS):
+	mkdir -p $(SF_LOGS)
+
+sf-setup: python-check $(SF_VENV)/.installed $(SF_LOGS)
+	@[ -f snowflake/.env ] || { echo "snowflake/.env missing: cp snowflake/.env.example snowflake/.env and fill it in"; exit 1; }
+	$(SF_PYTHON) -m lakehouse.sf.setup 2>&1 | tee $(SF_LOGS)/sf-setup.log; exit $${PIPESTATUS[0]}
+	cd snowflake/dbt && ../../$(SF_DBT) debug --no-use-colors 2>&1 | tee ../../$(SF_LOGS)/dbt-debug.log; exit $${PIPESTATUS[0]}
+
+sf-bronze: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.bronze --run-label "$(RUN_LABEL)" $(SF_BRONZE_FLAGS) 2>&1 | tee $(SF_LOGS)/sf-bronze.log; exit $${PIPESTATUS[0]}
+
+sf-verify: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.verify 2>&1 | tee $(SF_LOGS)/sf-verify.log; exit $${PIPESTATUS[0]}
+
+sf-silver-gold: $(SF_VENV)/.installed $(SF_LOGS)
+	cd snowflake/dbt && ../../$(SF_DBT) seed --no-use-colors 2>&1 | tee ../../$(SF_LOGS)/dbt-seed.log; exit $${PIPESTATUS[0]}
+	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors $(DBT_FLAGS) 2>&1 | tee ../../$(SF_LOGS)/dbt-build.log; exit $${PIPESTATUS[0]}
+
+sf-dbt-test: $(SF_VENV)/.installed $(SF_LOGS)
+	cd snowflake/dbt && ../../$(SF_DBT) test --no-use-colors $(DBT_FLAGS) 2>&1 | tee ../../$(SF_LOGS)/dbt-test.log; exit $${PIPESTATUS[0]}
+
+sf-parity: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.parity 2>&1 | tee $(SF_LOGS)/sf-parity.log; exit $${PIPESTATUS[0]}
+
+sf-show: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.show $(if $(SF_SHOW_STAGE),--stage,) 2>&1 | tee $(SF_LOGS)/sf-show.log; exit $${PIPESTATUS[0]}
+
+sf-all: sf-bronze sf-verify sf-silver-gold sf-parity
+
+sf-clean:
+	rm -rf snowflake/dbt/target snowflake/dbt/logs snowflake/dbt/dbt_packages
