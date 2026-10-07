@@ -22,6 +22,8 @@ sources:
       - name: bronze_pulse_quality_batches
       - name: bronze_ingest_log
         description: One row per (run_label, table, source_file, sha256) append, plus rows reconciled from the data tables.
+      - name: bronze_runpod_polls
+        description: One Runpod API snapshot (tools/runpod_poll.py) per row, as COPY INTO loaded it from @RUNPOD.
   - name: landing
     database: "{{ env_var('SNOWFLAKE_DATABASE', 'LAKEHOUSE') }}"
     schema: LANDING

@@ -24,8 +24,14 @@ snowflake/logs/            every make sf-* target tees its output here (gitignor
    openssl rsa -in lakehouse_rsa_key.p8 -pubout -out lakehouse_rsa_key.pub && chmod 600 lakehouse_rsa_key.p8
    grep -v -- '-----' lakehouse_rsa_key.pub | tr -d '\n'; echo       # paste into the ALTER USER below
    ```
-   In a Snowsight SQL editor as ACCOUNTADMIN: `ALTER USER "<CURRENT_USER()>" SET RSA_PUBLIC_KEY='MIIB…';` and check
-   `DESCRIBE USER "<name>"` shows `HAS_KEYPAIR true`.
+   In a Snowsight SQL editor as ACCOUNTADMIN, create a service user for the pipeline (SERVICE-type users are exempt from
+   MFA and exist for key-pair auth; a dotted or email-shaped personal user name makes the JWT subject ambiguous):
+   ```sql
+   CREATE USER LAKEHOUSE_SVC TYPE = SERVICE RSA_PUBLIC_KEY = 'MIIB…' DEFAULT_ROLE = ACCOUNTADMIN;
+   GRANT ROLE ACCOUNTADMIN TO USER LAKEHOUSE_SVC;   -- setup.sql needs it once; everything after runs as LAKEHOUSE_ROLE
+   DESCRIBE USER LAKEHOUSE_SVC;                     -- RSA_PUBLIC_KEY_FP must equal the local key's fingerprint:
+   ```
+   `openssl rsa -pubin -in ~/.snowflake/lakehouse_rsa_key.pub -outform DER | openssl dgst -sha256 -binary | openssl enc -base64`
 3. `cp snowflake/env.example snowflake/.env`, fill in the account identifier (`<locator>.<region>.<cloud>`, e.g. `ab12345.us-east-2.aws` — the cloud segment is required outside AWS us-west-2)
    and user name.
 4. `make sf-setup` — creates `.venv-sf`, runs `snowflake/setup.sql` as ACCOUNTADMIN, grants LAKEHOUSE_ROLE to your user,

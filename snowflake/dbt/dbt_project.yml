@@ -29,6 +29,8 @@ models:
       +schema: SILVER
     gold:
       +schema: GOLD
+    runpod:
+      +tags: [runpod]
 
 seeds:
   serverless_lakehouse:

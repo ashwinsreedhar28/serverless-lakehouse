@@ -1,0 +1,32 @@
+# Snapshot the Runpod account every 30 minutes and PUT the snapshot to the Snowflake stage @RUNPOD (no warehouse needed).
+# Loading + dbt happen in runpod-load.yml on a slower cadence so the warehouse is not resumed 48 times a day.
+# One-time setup — repository secrets: RUNPOD_API_KEY (a read-only key is enough), SNOWFLAKE_ACCOUNT (e.g. ab12345.us-east-2.aws),
+# SNOWFLAKE_USER (the SERVICE user), SNOWFLAKE_PRIVATE_KEY (the PEM text of ~/.snowflake/lakehouse_rsa_key.p8).
+name: runpod-poll
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'ashwinsreedhar28' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q "snowflake-connector-python==4.8.0" "cryptography>=42"
+      - name: write the private key
+        env: { SNOWFLAKE_PRIVATE_KEY: "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" }
+        run: |
+          install -d -m 700 "$HOME/.snowflake"
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$HOME/.snowflake/lakehouse_rsa_key.p8"
+          chmod 600 "$HOME/.snowflake/lakehouse_rsa_key.p8"
+      - name: poll + PUT
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+        run: python tools/runpod_poll.py
+      - uses: actions/upload-artifact@v4
+        with: { name: runpod-poll-${{ github.run_id }}, path: data/runpod/polls/*.json, retention-days: 7 }

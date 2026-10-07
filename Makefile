@@ -30,6 +30,8 @@
 #   make sf-parity                 Snowflake gold vs. space/data/gold.json (the Spark gold export) → docs/parity_report.md
 #   make sf-all                    sf-bronze → sf-verify → sf-silver-gold → sf-parity
 #   make sf-show                   bronze rows / files / ledger (+ stage listing with SF_SHOW_STAGE=1)
+#   make sf-runpod-poll            snapshot the Runpod API (needs RUNPOD_API_KEY) → data/runpod/polls/ → PUT @RUNPOD
+#   make sf-runpod-load            COPY new snapshots into bronze_runpod_polls + dbt build --select tag:runpod
 #   Every sf-* target also tees its output to snowflake/logs/<target>.log.
 #
 # Overrides:  EMBERSERVE_DIR, PULSE_DIR (source roots), FORMAT=delta|parquet, RUN_LABEL
@@ -57,7 +59,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -226,6 +228,13 @@ sf-parity: $(SF_VENV)/.installed $(SF_LOGS)
 
 sf-show: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.show $(if $(SF_SHOW_STAGE),--stage,) 2>&1 | tee $(SF_LOGS)/sf-show.log; exit $${PIPESTATUS[0]}
+
+sf-runpod-poll: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) tools/runpod_poll.py $(RUNPOD_POLL_FLAGS) 2>&1 | tee $(SF_LOGS)/sf-runpod-poll.log; exit $${PIPESTATUS[0]}
+
+sf-runpod-load: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.runpod load 2>&1 | tee $(SF_LOGS)/sf-runpod-load.log; exit $${PIPESTATUS[0]}
+	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors --select tag:runpod 2>&1 | tee ../../$(SF_LOGS)/dbt-runpod.log; exit $${PIPESTATUS[0]}
 
 sf-all: sf-bronze sf-verify sf-silver-gold sf-parity
 

@@ -38,3 +38,5 @@ snowflake/dbt/target/
 snowflake/dbt/logs/
 snowflake/dbt/dbt_packages/
 snowflake/dbt/.user.yml
+# Runpod API snapshots (they live in @RUNPOD and bronze; a local poll is scratch)
+data/runpod/

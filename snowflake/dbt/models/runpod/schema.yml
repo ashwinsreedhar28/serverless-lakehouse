@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: silver_runpod_polls
+    columns:
+      - name: poll_id
+        tests: [not_null, unique]
+      - name: poll_seq
+        tests: [not_null, unique]
+  - name: silver_runpod_endpoints
+    columns:
+      - name: endpoint_id
+        tests: [not_null]
+      - name: flashboot
+        tests: [{accepted_values: {arguments: {values: ["OFF", "FLASHBOOT", "PRIORITY_FLASHBOOT"]}}}]
+      - name: endpoint_type
+        tests: [{accepted_values: {arguments: {values: ["QUEUE", "LOAD_BALANCER"]}}}]
+  - name: silver_runpod_workers
+    columns:
+      - name: worker_id
+        tests: [not_null]
+      - name: status
+        tests: [not_null, {accepted_values: {arguments: {values: ["RUNNING", "IDLE", "INITIALIZING", "THROTTLED", "UNHEALTHY"]}}}]
+  - name: silver_runpod_worker_events
+    columns:
+      - name: event
+        tests: [not_null, {accepted_values: {arguments: {values: ["first_seen", "appeared", "disappeared", "status_changed"]}}}]
+  - name: silver_runpod_billing_hourly
+    columns:
+      - name: endpoint_id
+        tests: [not_null]
+      - name: total_usd
+        tests: [not_null]
+  - name: gold_runpod_endpoint_daily
+    columns:
+      - name: endpoint_id
+        tests: [not_null]
+      - name: day
+        tests: [not_null]
+  - name: gold_runpod_flashboot_check
+    columns:
+      - name: verdict
+        tests: [not_null, {accepted_values: {arguments: {values: ["agree", "disagree", "api fills a gap", "endpoint no longer exists"]}}}]

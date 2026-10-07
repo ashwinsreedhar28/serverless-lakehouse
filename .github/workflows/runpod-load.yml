@@ -1,0 +1,34 @@
+# COPY the Runpod snapshots that reached @RUNPOD since the last run into bronze, then rebuild the runpod-tagged dbt models.
+# Every 3 hours: one warehouse resume (~1–2 min of X-Small) per run. Same secrets as runpod-poll.yml.
+name: runpod-load
+on:
+  schedule:
+    - cron: "19 */3 * * *"
+  workflow_dispatch:
+jobs:
+  load:
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'ashwinsreedhar28' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q -r snowflake/requirements.txt
+      - name: write the private key
+        env: { SNOWFLAKE_PRIVATE_KEY: "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" }
+        run: |
+          install -d -m 700 "$HOME/.snowflake"
+          printf '%s\n' "$SNOWFLAKE_PRIVATE_KEY" > "$HOME/.snowflake/lakehouse_rsa_key.p8"
+          chmod 600 "$HOME/.snowflake/lakehouse_rsa_key.p8"
+      - name: COPY INTO bronze_runpod_polls
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+        run: python -m lakehouse.sf.runpod load --run-label "gha_${GITHUB_RUN_ID}"
+      - name: dbt build (runpod models + tests)
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY_PATH: /home/runner/.snowflake/lakehouse_rsa_key.p8
+        working-directory: snowflake/dbt
+        run: dbt build --no-use-colors --select tag:runpod
