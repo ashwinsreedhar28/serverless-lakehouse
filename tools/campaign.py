@@ -3,26 +3,27 @@
 cold-start script and the existing landing path. Nothing here runs load code of its own.
 
     python tools/campaign.py plan                    price the grid from campaign/grid.json → campaign/estimate.csv (no API)
-    python tools/campaign.py create [--cells …]      one endpoint per cell, cloned from the cell's reference endpoint
-                                                     (image, env, disk, timeout, CUDA) with the cell's GPU / FlashBoot;
-                                                     max workers 1, min 0, idle timeout 5 s; seeds/coldstart_series.csv gets
-                                                     one row per cell (GPU, FlashBoot, image known at run time, source "campaign")
-    python tools/campaign.py slot [--n-cold 1]       one slot: every cell gets --n-cold cold starts (cells run concurrently,
-                                                     each against its own endpoint), results → data/sources/runpod/campaign/,
-                                                     campaign/runs.csv gets a row per cell, then the 20 % spend check
-    python tools/campaign.py status                  endpoints, cold starts done per cell, $ so far
-    python tools/campaign.py teardown                DELETE every campaign endpoint (the end-of-stage rule)
-    python tools/campaign.py park                    workers.max = 0 on every campaign endpoint (nothing can start; keep configs)
-    python tools/campaign.py unpark                  workers.max = 1 again
+    python tools/campaign.py prepare                 record each image's endpoint (the one Runpod built from GitHub) and its
+                                                     original config into campaign/endpoints.json; seeds/coldstart_series.csv
+                                                     gets one row per cell (GPU, FlashBoot, image known at run time)
+    python tools/campaign.py slot [--n-cold 1]       one slot: for every image (concurrently), for every GPU × FlashBoot cell
+                                                     (sequentially): PATCH the endpoint to the cell's pool + FlashBoot, max workers 1,
+                                                     run --n-cold cold starts, max workers 0; results → data/sources/runpod/campaign/,
+                                                     campaign/runs.csv gets a row per cell, then land --only runpod + the 20 % spend check
+    python tools/campaign.py status                  cold starts done per cell, $ so far
+    python tools/campaign.py park / unpark           workers.max 0 / 1 on the three endpoints
+    python tools/campaign.py restore                 the end-of-stage rule: original pool / FlashBoot / idle timeout / max 0 back on
+                                                     each endpoint, and DELETE any lh-camp-* endpoint left from earlier attempts
 
-A cold request waits up to 45 min (--timeout-s 2700): a long placement wait on a saturated pool, or a 27 GB image pull onto
-a host that has never seen it (seen 2026-10-07: US 4090 hosts full, Runpod placed in EUR-IS-1 and pulled for 37+ min), is a
-result (`delay_ms`, and `schedule_pull_create` in the timeline phases), not a failure. Throttled and initializing workers are
-not billed.
+Why endpoints are reused, not created: the images are Runpod's own GitHub builds in registry.runpod.net, and only the endpoint
+Runpod built can pull them (a new endpoint with the same image — or the same template — fails with "Failed to get Hub registry
+auth"; seen 2026-10-07). PATCHing gpu.pools / excludedTypes / flashboot / workers on an existing endpoint is allowed and takes
+effect on the next worker, which is always a fresh one here (max 0 between cells).
 
-Keys: RUNPOD_API_KEY_RW (write). Cells and prices live in campaign/grid.json; `plan` is the estimate you approve before
-`create`. `slot` refuses to run when the spend check fails, when a cell has already reached its planned cold starts, or
-when campaign/endpoints.json is missing. Schedule slots with launchd (campaign/launchd.plist.example) or by hand.
+Keys: RUNPOD_API_KEY_RW (write). A cold request waits up to 45 min (--timeout-s 2700): a long placement wait on a saturated
+pool, or a 27 GB image pull onto a host that has never seen it, is a result (`delay_ms`, and `schedule_pull_create` in the
+timeline phases), not a failure. Throttled and initializing workers are not billed. Slots are serialised by a lock file so a
+long slot and the next launchd firing cannot overlap.
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ GRID = CAMPAIGN / "grid.json"
 ENDPOINTS = CAMPAIGN / "endpoints.json"
 RUNS = CAMPAIGN / "runs.csv"
 ESTIMATE = CAMPAIGN / "estimate.csv"
+LOCK = CAMPAIGN / ".slot.lock"
 OUT_DIR = REPO / "data" / "sources" / "runpod" / "campaign"
 SEEDS = REPO / "seeds" / "coldstart_series.csv"
 COLDSTART = REPO / "tools" / "serverless_coldstart.py"
@@ -58,14 +60,13 @@ def grid() -> dict:
 
 def cells(g: dict, only: list[str] | None = None) -> list[dict]:
     out = []
-    for gpu in g["gpus"]:
-        for fb in g["flashboot"]:
-            for img in g["images"]:
+    for img in g["images"]:
+        for gpu in g["gpus"]:
+            for fb in g["flashboot"]:
                 cell = f"{gpu['slug']}_{'fbon' if fb == 'FLASHBOOT' else 'fboff'}_{img['slug']}"
                 if only and cell not in only:
                     continue
-                boot_s = img["boot_s"] if fb != "FLASHBOOT" else img["boot_s"]     # FlashBoot hits make it cheaper, not dearer
-                billed_s = boot_s + img["exec_s"] + g["idle_timeout_s"]
+                billed_s = img["boot_s"] + img["exec_s"] + g["idle_timeout_s"]      # FlashBoot hits make it cheaper, not dearer
                 per_cold = billed_s / 3600 * gpu["usd_per_hr"]
                 out.append({"cell": cell, "gpu": gpu, "flashboot": fb, "image": img, "billed_s_per_cold": billed_s,
                             "usd_per_cold": per_cold, "n_cold": g["n_cold_per_cell"],
@@ -83,9 +84,9 @@ def cmd_plan(a) -> int:
     print(f"{'TOTAL':<28} {'':>5} {'':>13} {'':>7} {sum(c['n_cold'] for c in rows):>3} {total:>16.2f}")
     with ESTIMATE.open("w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["cell", "gpu_type", "usd_per_hr", "flashboot", "image", "billed_s_per_cold", "usd_per_cold", "n_cold", "est_usd_total"])
+        w.writerow(["cell", "gpu_type", "usd_per_hr", "flashboot", "image", "endpoint_id", "billed_s_per_cold", "usd_per_cold", "n_cold", "est_usd_total"])
         for c in rows:
-            w.writerow([c["cell"], c["gpu"]["type"], c["gpu"]["usd_per_hr"], c["flashboot"], c["image"]["slug"],
+            w.writerow([c["cell"], c["gpu"]["type"], c["gpu"]["usd_per_hr"], c["flashboot"], c["image"]["slug"], c["image"]["reference_endpoint"],
                         round(c["billed_s_per_cold"]), round(c["usd_per_cold"], 4), c["n_cold"], round(c["usd_total"], 2)])
     print(f"→ {ESTIMATE.relative_to(REPO)}; cap {g['usd_cap']} → {'OK' if total <= g['usd_cap'] else 'OVER THE CAP: cut the grid'}")
     return 0 if total <= g["usd_cap"] else 1
@@ -99,61 +100,38 @@ def save_endpoints(d: dict) -> None:
     ENDPOINTS.write_text(json.dumps(d, indent=1) + "\n", encoding="utf-8")
 
 
-def seed_row(c: dict, endpoint_id: str) -> list[str]:
+def seed_row(c: dict) -> list[str]:
     img = c["image"]
     return [c["cell"], img["engine"], img.get("engine_build", ""), img["model"], c["gpu"]["gpu_model"],
             "on" if c["flashboot"] == "FLASHBOOT" else "off", "api (endpoint config, campaign)", img["weights_mode"],
-            str(img.get("image_gb", "")), f"campaign cell; endpoint {endpoint_id}; {img['note']}"]
+            str(img.get("image_gb", "")), f"campaign cell on endpoint {img['reference_endpoint']}; {img['note']}"]
 
 
-def cmd_create(a) -> int:
+def cmd_prepare(a) -> int:
     g = grid()
     eps = load_endpoints()
-    refs: dict[str, dict] = {}
-    for c in cells(g, a.cells):
-        if c["cell"] in eps and a.recreate and not a.dry_run:
-            rp.call("DELETE", f"/v2/serverless/{eps[c['cell']]['endpoint_id']}")
-            print(f"  {c['cell']}: deleted {eps[c['cell']]['endpoint_id']}")
-            del eps[c["cell"]]
-            save_endpoints(eps)
-        if c["cell"] in eps:
-            print(f"  {c['cell']}: already {eps[c['cell']]['endpoint_id']}")
-            continue
-        ref_id = c["image"]["reference_endpoint"]
-        ref = refs.setdefault(ref_id, rp.call("GET", f"/v2/serverless/{ref_id}"))
-        pool, exclude, gcat = rp.resolve_gpu(c["gpu"]["type"])
-        env = dict(ref.get("env") or {})
-        env.update(c["image"].get("env", {}))
-        env["LAKEHOUSE"] = "1"
-        env["LAKEHOUSE_CELL"] = c["cell"]
-        body = {
-            "name": f"lh-camp-{c['cell']}",
-            "type": "QUEUE",
-            # the image is Runpod's own GitHub build in registry.runpod.net; only its template can pull it ("Failed to get Hub
-            # registry auth" otherwise), so create from the template and override the rest
-            "templateId": c["image"]["template_id"],
-            "gpu": {"pools": [pool], "excludedTypes": exclude, "count": 1,
-                    **({"allowedCudaVersions": ref["gpu"]["allowedCudaVersions"]} if (ref.get("gpu") or {}).get("allowedCudaVersions") else {}),
-                    **({"minCudaVersion": ref["gpu"]["minCudaVersion"]} if (ref.get("gpu") or {}).get("minCudaVersion") and not (ref.get("gpu") or {}).get("allowedCudaVersions") else {})},
-            "workers": {"min": 0, "max": 1, "idleTimeout": g["idle_timeout_s"]},
-            "scaling": {"type": "QUEUE_DELAY", "queueDelay": 4},
-            "flashboot": c["flashboot"],
-            "disk": ref.get("disk") or 40,
-            "env": env,
-            "timeout": ref.get("timeout") or 600000,
-        }
-        if a.dry_run:
-            print(json.dumps(body, indent=1))
-            continue
-        ep = rp.call("POST", "/v2/serverless", body)
-        eps[c["cell"]] = {"endpoint_id": ep["id"], "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                          "gpu_type": c["gpu"]["type"], "pool": pool, "flashboot": c["flashboot"], "image": ref["image"],
-                          "usd_per_hr": c["gpu"]["usd_per_hr"], "usd_per_cold": round(c["usd_per_cold"], 4), "n_cold_planned": c["n_cold"]}
-        save_endpoints(eps)
-        if c["cell"] not in SEEDS.read_text(encoding="utf-8"):
-            with SEEDS.open("a", newline="", encoding="utf-8") as f:
-                csv.writer(f).writerow(seed_row(c, ep["id"]))
-        print(f"  {c['cell']}: created {ep['id']} ({gcat['name']} in {pool}, flashboot {c['flashboot']}) from template {c['image']['template_id']}")
+    have = SEEDS.read_text(encoding="utf-8")
+    for img in g["images"]:
+        ep_id = img["reference_endpoint"]
+        if img["slug"] not in eps:
+            ep = rp.call("GET", f"/v2/serverless/{ep_id}")
+            eps[img["slug"]] = {"endpoint_id": ep_id, "name": ep.get("name"), "image": ep.get("image"),
+                                "original": {"gpu": {"pools": (ep.get("gpu") or {}).get("pools"), "excludedTypes": (ep.get("gpu") or {}).get("excludedTypes") or []},
+                                             "flashboot": ep.get("flashboot"), "workers": ep.get("workers")},
+                                "prepared_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            print(f"  {img['slug']:<8} {ep_id} {ep.get('name')}: original pools={eps[img['slug']]['original']['gpu']['pools']} "
+                  f"flashboot={ep.get('flashboot')} workers={ep.get('workers')}")
+        else:
+            print(f"  {img['slug']:<8} {ep_id}: already recorded")
+    save_endpoints(eps)
+    n = 0
+    with SEEDS.open("a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        for c in cells(g):
+            if c["cell"] + "," not in have:
+                w.writerow(seed_row(c))
+                n += 1
+    print(f"prepare: {len(eps)} endpoints recorded, {n} seed rows appended")
     return 0
 
 
@@ -165,17 +143,39 @@ def cold_starts_done(cell: str) -> int:
     return n
 
 
-def run_cell(cell: str, ep: dict, n_cold: int, key: str, timeline: bool, stamp: str) -> tuple[str, int, str]:
+def set_cell(endpoint_id: str, c: dict, max_workers: int, idle_s: int) -> None:
+    pool, exclude, _ = rp.resolve_gpu(c["gpu"]["type"])
+    rp.call("PATCH", f"/v2/serverless/{endpoint_id}", {
+        "gpu": {"pools": [pool], "excludedTypes": exclude},
+        "flashboot": c["flashboot"],
+        "workers": {"min": 0, "max": max_workers, "idleTimeout": idle_s},
+    })
+
+
+def run_cell(c: dict, ep: dict, n_cold: int, key: str, stamp: str, idle_s: int) -> tuple[str, int, str]:
+    cell, endpoint_id = c["cell"], ep["endpoint_id"]
+    set_cell(endpoint_id, c, 1, idle_s)
+    time.sleep(5)
     out = OUT_DIR / f"serverless_coldstart_{cell}_{stamp}.json"
-    cmd = [sys.executable, str(COLDSTART), "--mode", "queue", "--endpoint", ep["endpoint_id"], "--api-key", key,
+    cmd = [sys.executable, str(COLDSTART), "--mode", "queue", "--endpoint", endpoint_id, "--api-key", key,
            "--repeats", str(n_cold), "--idle-s", "0", "--zero-wait-s", "300", "--max-tokens", "16", "--timeout-s", "2700",
-           "--label", cell, "--image", ep["image"], "--note", f"campaign slot {stamp}; {ep['gpu_type']}; flashboot {ep['flashboot']}",
+           "--label", cell, "--image", ep["image"], "--note", f"campaign slot {stamp}; {c['gpu']['type']}; flashboot {c['flashboot']}",
            "--out", str(out)]
-    if timeline:
+    if c["image"].get("timeline"):
         cmd.append("--timeline")
     r = subprocess.run(cmd, capture_output=True, text=True)
+    rp.call("PATCH", f"/v2/serverless/{endpoint_id}", {"workers": {"min": 0, "max": 0, "idleTimeout": idle_s}})
     tail = (r.stderr or "").strip().splitlines()[-1:] or [""]
     return cell, r.returncode, tail[0]
+
+
+def run_image(img_slug: str, todo: list[dict], ep: dict, n_cold: int, key: str, stamp: str, idle_s: int) -> list[tuple[str, int, str]]:
+    results = []
+    for c in todo:
+        print(f"  [{img_slug}] {c['cell']} …", flush=True)
+        results.append(run_cell(c, ep, n_cold, key, stamp, idle_s))
+        print(f"  [{img_slug}] {results[-1][0]:<28} rc={results[-1][1]}  {results[-1][2][:100]}", flush=True)
+    return results
 
 
 def cmd_slot(a) -> int:
@@ -183,90 +183,91 @@ def cmd_slot(a) -> int:
     g = grid()
     eps = load_endpoints()
     if not eps:
-        sys.exit("campaign/endpoints.json is missing: run `campaign.py create` first")
+        sys.exit("campaign/endpoints.json is missing: run `campaign.py prepare` first")
+    if LOCK.is_file() and time.time() - LOCK.stat().st_mtime < 6 * 3600:
+        sys.exit(f"slot: another slot is running (lock {LOCK.relative_to(REPO)}, {int(time.time() - LOCK.stat().st_mtime)} s old)")
     if not a.skip_spend_check:
         chk = subprocess.run([sys.executable, "-m", "lakehouse.sf.spend", "--check"], cwd=REPO)
         if chk.returncode != 0:
             sys.exit("spend check failed (actual > estimate × 1.2 on some endpoint): slot not run")
-    todo = []
-    for cell, ep in eps.items():
-        if a.cells and cell not in a.cells:
+    by_image: dict[str, list[dict]] = {}
+    for c in cells(g, a.cells):
+        done = cold_starts_done(c["cell"])
+        if done >= c["n_cold"]:
+            print(f"  {c['cell']}: {done}/{c['n_cold']} cold starts already, skipping")
             continue
-        done = cold_starts_done(cell)
-        if done >= ep["n_cold_planned"]:
-            print(f"  {cell}: {done}/{ep['n_cold_planned']} cold starts already, skipping")
-            continue
-        todo.append((cell, ep))
-    if not todo:
+        by_image.setdefault(c["image"]["slug"], []).append(c)
+    if not by_image:
         print("slot: nothing to do")
         return 0
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%MZ")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    img_by_slug = {i["slug"]: i for i in g["images"]}
-    print(f"slot {stamp}: {len(todo)} cells × {a.n_cold} cold start(s), concurrently")
-    with ThreadPoolExecutor(max_workers=min(8, len(todo))) as pool:
-        futs = [pool.submit(run_cell, cell, ep, a.n_cold, key, img_by_slug[cell.rsplit('_', 1)[-1]].get("timeline", False), stamp)
-                for cell, ep in todo]
-        results = [f.result() for f in futs]
+    LOCK.write_text(stamp)
+    try:
+        print(f"slot {stamp}: {sum(len(v) for v in by_image.values())} cells × {a.n_cold} cold start(s); images concurrently, cells sequentially per image")
+        with ThreadPoolExecutor(max_workers=len(by_image)) as pool:
+            futs = [pool.submit(run_image, slug, todo, eps[slug], a.n_cold, key, stamp, g["idle_timeout_s"]) for slug, todo in by_image.items()]
+            results = [r for f in futs for r in f.result()]
+    finally:
+        LOCK.unlink(missing_ok=True)
+    cell_by_name = {c["cell"]: c for v in by_image.values() for c in v}
     new = not RUNS.is_file()
     with RUNS.open("a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if new:
             w.writerow(["date_utc", "cell", "endpoint_id", "n_cold", "est_usd", "note"])
         for cell, rc, tail in results:
-            ep = eps[cell]
-            w.writerow([stamp, cell, ep["endpoint_id"], a.n_cold, round(ep["usd_per_cold"] * a.n_cold, 4), f"rc={rc} {tail[:120]}"])
-            print(f"  {cell:<28} rc={rc}  {tail[:110]}")
+            c = cell_by_name[cell]
+            w.writerow([stamp, cell, c["image"]["reference_endpoint"], a.n_cold, round(c["usd_per_cold"] * a.n_cold, 4), f"rc={rc} {tail[:120]}"])
     subprocess.run([sys.executable, "-m", "lakehouse.land", "--only", "runpod"], cwd=REPO, check=False)
     return 0 if all(rc == 0 for _, rc, _ in results) else 1
 
 
-def cmd_park(a, max_workers: int = 0) -> int:
-    for cell, ep in load_endpoints().items():
-        if ep.get("deleted_at"):
-            continue
-        rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", {"workers": {"min": 0, "max": max_workers}})
-        print(f"  {cell}: workers.max = {max_workers}")
-    return 0
-
-
 def cmd_status(a) -> int:
-    eps = load_endpoints()
-    for cell, ep in eps.items():
-        print(f"  {cell:<28} {ep['endpoint_id']}  {cold_starts_done(cell)}/{ep['n_cold_planned']} cold starts  est ${ep['usd_per_cold']:.3f}/cold")
+    g = grid()
+    for c in cells(g):
+        print(f"  {c['cell']:<28} {c['image']['reference_endpoint']}  {cold_starts_done(c['cell'])}/{c['n_cold']} cold starts  est ${c['usd_per_cold']:.3f}/cold")
     if RUNS.is_file():
         rows = list(csv.DictReader(RUNS.open(encoding="utf-8")))
         print(f"  {len(rows)} slot-cell runs logged, est ${sum(float(r['est_usd']) for r in rows):.2f}")
     return 0
 
 
-def cmd_teardown(a) -> int:
-    eps = load_endpoints()
-    for cell, ep in list(eps.items()):
-        rp.call("DELETE", f"/v2/serverless/{ep['endpoint_id']}")
-        ep["deleted_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        print(f"  deleted {ep['endpoint_id']} ({cell})")
-    save_endpoints(eps)
-    left = [e for e in rp.call("GET", "/v2/serverless?limit=1000").get("endpoints", []) if (e.get("env") or {}).get("LAKEHOUSE_CELL")]
-    print(f"teardown: {len(left)} campaign endpoint(s) still on the account")
-    return 0 if not left else 1
+def cmd_park(a, max_workers: int = 0) -> int:
+    for slug, ep in load_endpoints().items():
+        rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", {"workers": {"min": 0, "max": max_workers}})
+        print(f"  {slug}: {ep['endpoint_id']} workers.max = {max_workers}")
+    return 0
+
+
+def cmd_restore(a) -> int:
+    for slug, ep in load_endpoints().items():
+        o = ep["original"]
+        body = {"gpu": {"pools": o["gpu"]["pools"], "excludedTypes": o["gpu"]["excludedTypes"]}, "flashboot": o["flashboot"],
+                "workers": {"min": 0, "max": 0, "idleTimeout": (o.get("workers") or {}).get("idleTimeout", 5)}}
+        rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", body)
+        print(f"  {slug}: {ep['endpoint_id']} restored pools={o['gpu']['pools']} flashboot={o['flashboot']} max=0")
+    left = [e for e in rp.call("GET", "/v2/serverless?limit=1000").get("endpoints", []) if e.get("name", "").startswith("lh-camp-")]
+    for e in left:
+        rp.call("DELETE", f"/v2/serverless/{e['id']}")
+        print(f"  deleted leftover {e['id']} {e['name']}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("plan")
-    p = sub.add_parser("create"); p.add_argument("--cells", nargs="*"); p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--recreate", action="store_true", help="DELETE the cell's existing endpoint first (a broken one), then create")
+    sub.add_parser("prepare")
     p = sub.add_parser("slot"); p.add_argument("--n-cold", type=int, default=1); p.add_argument("--cells", nargs="*")
     p.add_argument("--skip-spend-check", action="store_true")
     sub.add_parser("status")
-    sub.add_parser("teardown")
     sub.add_parser("park")
     sub.add_parser("unpark")
+    sub.add_parser("restore")
     a = ap.parse_args(argv)
-    return {"plan": cmd_plan, "create": cmd_create, "slot": cmd_slot, "status": cmd_status, "teardown": cmd_teardown,
-            "park": cmd_park, "unpark": lambda a: cmd_park(a, 1)}[a.cmd](a)
+    return {"plan": cmd_plan, "prepare": cmd_prepare, "slot": cmd_slot, "status": cmd_status, "park": cmd_park,
+            "unpark": lambda a: cmd_park(a, 1), "restore": cmd_restore}[a.cmd](a)
 
 
 if __name__ == "__main__":

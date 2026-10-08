@@ -37,9 +37,10 @@
 #
 # Runpod measurement campaign and load generator (need RUNPOD_API_KEY_RW in snowflake/.env; tools/campaign.py, tools/runpod_endpoint.py):
 #   make campaign-plan             price the grid (campaign/grid.json) → campaign/estimate.csv; no API call, no spend
-#   make campaign-create           create one endpoint per cell (+ seed rows); campaign-create DRY=1 only prints the bodies
-#   make campaign-slot [N_COLD=1]  one cold start per cell, all cells concurrently, then land --only runpod + spend check
-#   make campaign-status / campaign-park / campaign-unpark / campaign-teardown   progress; max workers 0 / 1; DELETE every campaign endpoint
+#   make campaign-prepare          record the three build endpoints' original config (+ one seed row per cell); no spend
+#   make campaign-slot [N_COLD=1]  one cold start per cell: images concurrently, GPU×FlashBoot cells sequentially per endpoint
+#                                  (PATCH pool + FlashBoot, max 1, run, max 0), then land --only runpod + spend check
+#   make campaign-status / campaign-park / campaign-unpark / campaign-restore   progress; max 0 / 1; original config back + delete lh-camp-*
 #   make loadgen-create            the load generator's endpoint (4090 PRO, FlashBoot on, baked image, idle 10 s, max 1)
 #   make loadgen-off / loadgen-on  kill switch: workers.max 0 / 1 (LOADGEN_ENDPOINT in snowflake/.env)
 #
@@ -68,7 +69,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: campaign-park campaign-unpark sf-spend campaign-plan campaign-create campaign-slot campaign-status campaign-teardown loadgen-create loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-create loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -257,8 +258,8 @@ N_COLD ?= 1
 campaign-plan:
 	$(PY) tools/campaign.py plan
 
-campaign-create: $(SF_VENV)/.httpx
-	$(SF_PYTHON) tools/campaign.py create $(if $(DRY),--dry-run,) $(if $(RECREATE),--recreate,) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+campaign-prepare: $(SF_VENV)/.httpx $(SF_LOGS)
+	$(SF_PYTHON) tools/campaign.py prepare 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
 
 campaign-slot: $(SF_VENV)/.httpx $(SF_LOGS)
 	$(SF_PYTHON) tools/campaign.py slot --n-cold $(N_COLD) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
@@ -269,8 +270,8 @@ campaign-park campaign-unpark:
 campaign-status:
 	$(SF_PYTHON) tools/campaign.py status
 
-campaign-teardown:
-	$(SF_PYTHON) tools/campaign.py teardown 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+campaign-restore:
+	$(SF_PYTHON) tools/campaign.py restore 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
 
 LOADGEN_IMAGE_REF ?= registry.runpod.net/ashwinsreedhar28-emberserve-main-deploy-runpod-dockerfile-qwen3:038a1a253
 loadgen-create: $(SF_VENV)/.installed

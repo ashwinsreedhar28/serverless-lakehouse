@@ -353,7 +353,8 @@ them: endpoints, workers, worker *events* (derived by diffing consecutive polls:
 endpoint. There is no "list jobs" API and no REST equivalent of the console's metrics tab, so per-job data comes only from
 the things that submit jobs: the hourly load generator (`.github/workflows/loadgen.yml`, one cold + one warm request
 through the vendored `tools/serverless_coldstart.py`, committed to `data/sources/runpod/loadgen/`) and the measurement
-campaign (`tools/campaign.py`: GPU × FlashBoot × image cells, each its own endpoint created from an existing image, cold
+campaign (`tools/campaign.py`: GPU × FlashBoot × image cells, each run by re-pointing the image's own build endpoint at
+the cell's GPU pool and FlashBoot setting — Runpod's GitHub-built images can only be pulled by the endpoint that built them — cold
 starts spread over four UTC slots a day, `campaign/estimate.csv` approved before `create`, `docs/spend_log.md` from
 Runpod's own billing records with a 20 % overrun stop). Both land through `make land --only runpod`, the same
 `coldstart_series` format and the same bronze tables, so the Spark side picks them up on the next `make all`.

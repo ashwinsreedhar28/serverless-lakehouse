@@ -1,25 +1,25 @@
-cell,gpu_type,usd_per_hr,flashboot,image,billed_s_per_cold,usd_per_cold,n_cold,est_usd_total
-4090_fboff_baked,NVIDIA GeForce RTX 4090,1.1,OFF,baked,30,0.0092,10,0.14
-4090_fboff_fetched,NVIDIA GeForce RTX 4090,1.1,OFF,fetched,55,0.0168,10,0.25
-4090_fboff_wvllm,NVIDIA GeForce RTX 4090,1.1,OFF,wvllm,190,0.0581,10,0.87
-4090_fbon_baked,NVIDIA GeForce RTX 4090,1.1,FLASHBOOT,baked,30,0.0092,10,0.14
-4090_fbon_fetched,NVIDIA GeForce RTX 4090,1.1,FLASHBOOT,fetched,55,0.0168,10,0.25
-4090_fbon_wvllm,NVIDIA GeForce RTX 4090,1.1,FLASHBOOT,wvllm,190,0.0581,10,0.87
-a40_fboff_baked,NVIDIA A40,1.22,OFF,baked,30,0.0102,10,0.15
-a40_fboff_fetched,NVIDIA A40,1.22,OFF,fetched,55,0.0186,10,0.28
-a40_fboff_wvllm,NVIDIA A40,1.22,OFF,wvllm,190,0.0644,10,0.97
-a40_fbon_baked,NVIDIA A40,1.22,FLASHBOOT,baked,30,0.0102,10,0.15
-a40_fbon_fetched,NVIDIA A40,1.22,FLASHBOOT,fetched,55,0.0186,10,0.28
-a40_fbon_wvllm,NVIDIA A40,1.22,FLASHBOOT,wvllm,190,0.0644,10,0.97
-a100_fboff_baked,NVIDIA A100 80GB PCIe,2.72,OFF,baked,30,0.0227,10,0.34
-a100_fboff_fetched,NVIDIA A100 80GB PCIe,2.72,OFF,fetched,55,0.0416,10,0.62
-a100_fboff_wvllm,NVIDIA A100 80GB PCIe,2.72,OFF,wvllm,190,0.1436,10,2.15
-a100_fbon_baked,NVIDIA A100 80GB PCIe,2.72,FLASHBOOT,baked,30,0.0227,10,0.34
-a100_fbon_fetched,NVIDIA A100 80GB PCIe,2.72,FLASHBOOT,fetched,55,0.0416,10,0.62
-a100_fbon_wvllm,NVIDIA A100 80GB PCIe,2.72,FLASHBOOT,wvllm,190,0.1436,10,2.15
-h100_fboff_baked,NVIDIA H100 80GB HBM3,4.79,OFF,baked,30,0.0399,10,0.6
-h100_fboff_fetched,NVIDIA H100 80GB HBM3,4.79,OFF,fetched,55,0.0732,10,1.1
-h100_fboff_wvllm,NVIDIA H100 80GB HBM3,4.79,OFF,wvllm,190,0.2528,10,3.79
-h100_fbon_baked,NVIDIA H100 80GB HBM3,4.79,FLASHBOOT,baked,30,0.0399,10,0.6
-h100_fbon_fetched,NVIDIA H100 80GB HBM3,4.79,FLASHBOOT,fetched,55,0.0732,10,1.1
-h100_fbon_wvllm,NVIDIA H100 80GB HBM3,4.79,FLASHBOOT,wvllm,190,0.2528,10,3.79
+cell,gpu_type,usd_per_hr,flashboot,image,endpoint_id,billed_s_per_cold,usd_per_cold,n_cold,est_usd_total
+4090_fboff_baked,NVIDIA GeForce RTX 4090,1.1,OFF,baked,h90byyjfb0ofbu,30,0.0092,10,0.14
+4090_fbon_baked,NVIDIA GeForce RTX 4090,1.1,FLASHBOOT,baked,h90byyjfb0ofbu,30,0.0092,10,0.14
+a40_fboff_baked,NVIDIA A40,1.22,OFF,baked,h90byyjfb0ofbu,30,0.0102,10,0.15
+a40_fbon_baked,NVIDIA A40,1.22,FLASHBOOT,baked,h90byyjfb0ofbu,30,0.0102,10,0.15
+a100_fboff_baked,NVIDIA A100 80GB PCIe,2.72,OFF,baked,h90byyjfb0ofbu,30,0.0227,10,0.34
+a100_fbon_baked,NVIDIA A100 80GB PCIe,2.72,FLASHBOOT,baked,h90byyjfb0ofbu,30,0.0227,10,0.34
+h100_fboff_baked,NVIDIA H100 80GB HBM3,4.79,OFF,baked,h90byyjfb0ofbu,30,0.0399,10,0.6
+h100_fbon_baked,NVIDIA H100 80GB HBM3,4.79,FLASHBOOT,baked,h90byyjfb0ofbu,30,0.0399,10,0.6
+4090_fboff_fetched,NVIDIA GeForce RTX 4090,1.1,OFF,fetched,ri6eo614hmu510,55,0.0168,10,0.25
+4090_fbon_fetched,NVIDIA GeForce RTX 4090,1.1,FLASHBOOT,fetched,ri6eo614hmu510,55,0.0168,10,0.25
+a40_fboff_fetched,NVIDIA A40,1.22,OFF,fetched,ri6eo614hmu510,55,0.0186,10,0.28
+a40_fbon_fetched,NVIDIA A40,1.22,FLASHBOOT,fetched,ri6eo614hmu510,55,0.0186,10,0.28
+a100_fboff_fetched,NVIDIA A100 80GB PCIe,2.72,OFF,fetched,ri6eo614hmu510,55,0.0416,10,0.62
+a100_fbon_fetched,NVIDIA A100 80GB PCIe,2.72,FLASHBOOT,fetched,ri6eo614hmu510,55,0.0416,10,0.62
+h100_fboff_fetched,NVIDIA H100 80GB HBM3,4.79,OFF,fetched,ri6eo614hmu510,55,0.0732,10,1.1
+h100_fbon_fetched,NVIDIA H100 80GB HBM3,4.79,FLASHBOOT,fetched,ri6eo614hmu510,55,0.0732,10,1.1
+4090_fboff_wvllm,NVIDIA GeForce RTX 4090,1.1,OFF,wvllm,rvy2p7bfia91fm,190,0.0581,10,0.87
+4090_fbon_wvllm,NVIDIA GeForce RTX 4090,1.1,FLASHBOOT,wvllm,rvy2p7bfia91fm,190,0.0581,10,0.87
+a40_fboff_wvllm,NVIDIA A40,1.22,OFF,wvllm,rvy2p7bfia91fm,190,0.0644,10,0.97
+a40_fbon_wvllm,NVIDIA A40,1.22,FLASHBOOT,wvllm,rvy2p7bfia91fm,190,0.0644,10,0.97
+a100_fboff_wvllm,NVIDIA A100 80GB PCIe,2.72,OFF,wvllm,rvy2p7bfia91fm,190,0.1436,10,2.15
+a100_fbon_wvllm,NVIDIA A100 80GB PCIe,2.72,FLASHBOOT,wvllm,rvy2p7bfia91fm,190,0.1436,10,2.15
+h100_fboff_wvllm,NVIDIA H100 80GB HBM3,4.79,OFF,wvllm,rvy2p7bfia91fm,190,0.2528,10,3.79
+h100_fbon_wvllm,NVIDIA H100 80GB HBM3,4.79,FLASHBOOT,wvllm,rvy2p7bfia91fm,190,0.2528,10,3.79

@@ -2,7 +2,7 @@
 <!-- Campaign slots, four times a day (UTC 02:10, 08:10, 14:10, 20:10 ≈ 22:10, 04:10, 10:10, 16:10 Eastern), one cold start per cell per slot.
      Install: sed "s|__REPO__|$HOME/serverless-lakehouse|" campaign/launchd.plist.example > ~/Library/LaunchAgents/com.lakehouse.campaign.plist
               launchctl load ~/Library/LaunchAgents/com.lakehouse.campaign.plist
-     Stop:    launchctl unload ~/Library/LaunchAgents/com.lakehouse.campaign.plist   (and `make campaign-teardown` to delete the endpoints)
+     Stop:    launchctl unload ~/Library/LaunchAgents/com.lakehouse.campaign.plist   (and `make campaign-restore` to put the endpoints back)
      The Mac must be awake at those times (System Settings → Battery → prevent sleep on power, or `caffeinate`). The key comes from
      snowflake/.env (RUNPOD_API_KEY_RW) through make, never from this file. -->
 <plist version="1.0">

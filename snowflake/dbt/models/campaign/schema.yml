@@ -17,5 +17,5 @@ models:
         tests: [not_null]
   - name: gold_campaign_cost_by_gpu_image
     columns:
-      - name: endpoint_id
+      - name: cell
         tests: [not_null, unique]
