@@ -258,7 +258,7 @@ campaign-plan:
 	$(PY) tools/campaign.py plan
 
 campaign-create: $(SF_VENV)/.httpx
-	$(SF_PYTHON) tools/campaign.py create $(if $(DRY),--dry-run,) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
+	$(SF_PYTHON) tools/campaign.py create $(if $(DRY),--dry-run,) $(if $(RECREATE),--recreate,) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
 
 campaign-slot: $(SF_VENV)/.httpx $(SF_LOGS)
 	$(SF_PYTHON) tools/campaign.py slot --n-cold $(N_COLD) $(if $(CELLS),--cells $(CELLS),) 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}

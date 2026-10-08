@@ -111,6 +111,11 @@ def cmd_create(a) -> int:
     eps = load_endpoints()
     refs: dict[str, dict] = {}
     for c in cells(g, a.cells):
+        if c["cell"] in eps and a.recreate and not a.dry_run:
+            rp.call("DELETE", f"/v2/serverless/{eps[c['cell']]['endpoint_id']}")
+            print(f"  {c['cell']}: deleted {eps[c['cell']]['endpoint_id']}")
+            del eps[c["cell"]]
+            save_endpoints(eps)
         if c["cell"] in eps:
             print(f"  {c['cell']}: already {eps[c['cell']]['endpoint_id']}")
             continue
@@ -124,7 +129,9 @@ def cmd_create(a) -> int:
         body = {
             "name": f"lh-camp-{c['cell']}",
             "type": "QUEUE",
-            "image": ref["image"],
+            # the image is Runpod's own GitHub build in registry.runpod.net; only its template can pull it ("Failed to get Hub
+            # registry auth" otherwise), so create from the template and override the rest
+            "templateId": c["image"]["template_id"],
             "gpu": {"pools": [pool], "excludedTypes": exclude, "count": 1,
                     **({"allowedCudaVersions": ref["gpu"]["allowedCudaVersions"]} if (ref.get("gpu") or {}).get("allowedCudaVersions") else {}),
                     **({"minCudaVersion": ref["gpu"]["minCudaVersion"]} if (ref.get("gpu") or {}).get("minCudaVersion") and not (ref.get("gpu") or {}).get("allowedCudaVersions") else {})},
@@ -143,9 +150,10 @@ def cmd_create(a) -> int:
                           "gpu_type": c["gpu"]["type"], "pool": pool, "flashboot": c["flashboot"], "image": ref["image"],
                           "usd_per_hr": c["gpu"]["usd_per_hr"], "usd_per_cold": round(c["usd_per_cold"], 4), "n_cold_planned": c["n_cold"]}
         save_endpoints(eps)
-        with SEEDS.open("a", newline="", encoding="utf-8") as f:
-            csv.writer(f).writerow(seed_row(c, ep["id"]))
-        print(f"  {c['cell']}: created {ep['id']} ({gcat['name']} in {pool}, flashboot {c['flashboot']}); seed row appended")
+        if c["cell"] not in SEEDS.read_text(encoding="utf-8"):
+            with SEEDS.open("a", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(seed_row(c, ep["id"]))
+        print(f"  {c['cell']}: created {ep['id']} ({gcat['name']} in {pool}, flashboot {c['flashboot']}) from template {c['image']['template_id']}")
     return 0
 
 
@@ -249,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("plan")
     p = sub.add_parser("create"); p.add_argument("--cells", nargs="*"); p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--recreate", action="store_true", help="DELETE the cell's existing endpoint first (a broken one), then create")
     p = sub.add_parser("slot"); p.add_argument("--n-cold", type=int, default=1); p.add_argument("--cells", nargs="*")
     p.add_argument("--skip-spend-check", action="store_true")
     sub.add_parser("status")
