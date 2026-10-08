@@ -1,0 +1,74 @@
+{
+ "kind": "serverless_coldstart",
+ "mode": "queue",
+ "endpoint": "ri6eo614hmu510",
+ "label": "4090_fboff_fetched",
+ "image": "registry.runpod.net/ashwinsreedhar28-emberserve-slim-image-deploy-runpod-dockerfile-slim:038a1a253",
+ "note": "campaign slot 20261008T0311Z; NVIDIA GeForce RTX 4090; flashboot OFF",
+ "max_tokens": 16,
+ "idle_s": 0.0,
+ "runs": [
+  {
+   "health_before": {
+    "jobs": {
+     "completed": 20,
+     "failed": 0,
+     "inProgress": 0,
+     "inQueue": 0,
+     "retried": 0
+    },
+    "workers": {
+     "idle": 0,
+     "initializing": 0,
+     "ready": 0,
+     "running": 0,
+     "throttled": 0,
+     "unhealthy": 0
+    }
+   },
+   "cold": {
+    "status": 409,
+    "total_s": 0.03895774995908141,
+    "ok": false,
+    "job_status": 409,
+    "delay_ms": null,
+    "execution_ms": null,
+    "worker_id": null,
+    "submit_wall": 1791429123.0752819,
+    "cold": false,
+    "timeline": null,
+    "phases_s": null,
+    "error": "{\"status\":409,\"title\":\"Conflict\",\"detail\":\"Endpoint is paused (max_workers=0). Set max_workers \\u003e 0 to accept work.\",\"code\":\"ENDPOINT_PAUSED\"}"
+   },
+   "warm": {
+    "status": 409,
+    "total_s": 0.03723008278757334,
+    "ok": false,
+    "job_status": 409,
+    "delay_ms": null,
+    "execution_ms": null,
+    "worker_id": null,
+    "submit_wall": 1791429123.1142972,
+    "cold": false,
+    "error": "{\"status\":409,\"title\":\"Conflict\",\"detail\":\"Endpoint is paused (max_workers=0). Set max_workers \\u003e 0 to accept work.\",\"code\":\"ENDPOINT_PAUSED\"}"
+   }
+  }
+ ],
+ "summary": {
+  "cold_s": {
+   "n": 0,
+   "min": null,
+   "median": null,
+   "max": null
+  },
+  "cold_delay_ms": {
+   "median": null,
+   "values": []
+  },
+  "warm_total_s": {
+   "median": null
+  },
+  "failures": 1,
+  "not_cold": 0
+ }
+}
