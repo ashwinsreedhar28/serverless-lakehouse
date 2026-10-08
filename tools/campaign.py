@@ -150,10 +150,12 @@ def gpu_body(endpoint_id: str, pools: list[str], exclude: list[str]) -> dict:
     (422 "want string") — so send exactly one of the two keys and leave the other out."""
     cur = (rp.call("GET", f"/v2/serverless/{endpoint_id}").get("gpu") or {})
     body = {"pools": pools, "excludedTypes": exclude, "count": cur.get("count") or 1}
-    if cur.get("allowedCudaVersions"):
+    if cur.get("minCudaVersion"):
+        # The PATCH is merged into the stored object, so a stored list must be *emptied*, not omitted ([] passes the
+        # mutual-exclusion check; null does not pass validation). worker-vllm stores ["13.0"] + "13.0" — keep the min.
+        body["allowedCudaVersions"], body["minCudaVersion"] = [], cur["minCudaVersion"]
+    elif cur.get("allowedCudaVersions"):
         body["allowedCudaVersions"] = cur["allowedCudaVersions"]
-    elif cur.get("minCudaVersion"):
-        body["minCudaVersion"] = cur["minCudaVersion"]
     return body
 
 
