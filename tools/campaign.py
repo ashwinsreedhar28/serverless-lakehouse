@@ -15,8 +15,10 @@ cold-start script and the existing landing path. Nothing here runs load code of 
     python tools/campaign.py park                    workers.max = 0 on every campaign endpoint (nothing can start; keep configs)
     python tools/campaign.py unpark                  workers.max = 1 again
 
-A cold request waits up to 30 min (--timeout-s 1800): a long placement wait on a saturated pool is a result (`delay_ms`),
-not a failure. Throttled workers are not billed.
+A cold request waits up to 45 min (--timeout-s 2700): a long placement wait on a saturated pool, or a 27 GB image pull onto
+a host that has never seen it (seen 2026-10-07: US 4090 hosts full, Runpod placed in EUR-IS-1 and pulled for 37+ min), is a
+result (`delay_ms`, and `schedule_pull_create` in the timeline phases), not a failure. Throttled and initializing workers are
+not billed.
 
 Keys: RUNPOD_API_KEY_RW (write). Cells and prices live in campaign/grid.json; `plan` is the estimate you approve before
 `create`. `slot` refuses to run when the spend check fails, when a cell has already reached its planned cold starts, or
@@ -158,7 +160,7 @@ def cold_starts_done(cell: str) -> int:
 def run_cell(cell: str, ep: dict, n_cold: int, key: str, timeline: bool, stamp: str) -> tuple[str, int, str]:
     out = OUT_DIR / f"serverless_coldstart_{cell}_{stamp}.json"
     cmd = [sys.executable, str(COLDSTART), "--mode", "queue", "--endpoint", ep["endpoint_id"], "--api-key", key,
-           "--repeats", str(n_cold), "--idle-s", "0", "--zero-wait-s", "300", "--max-tokens", "16", "--timeout-s", "1800",
+           "--repeats", str(n_cold), "--idle-s", "0", "--zero-wait-s", "300", "--max-tokens", "16", "--timeout-s", "2700",
            "--label", cell, "--image", ep["image"], "--note", f"campaign slot {stamp}; {ep['gpu_type']}; flashboot {ep['flashboot']}",
            "--out", str(out)]
     if timeline:
