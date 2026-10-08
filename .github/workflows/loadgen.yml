@@ -9,8 +9,9 @@
 # Secrets: RUNPOD_API_KEY_RW (write permission: it submits jobs), LOADGEN_ENDPOINT (the endpoint id).
 # Endpoint contract (what the cost estimate assumes): RTX 4090, min 0 / max 1 workers, idle timeout 10 s, FlashBoot on,
 # minCudaVersion 12.8 — `make loadgen-setup` puts an existing endpoint into that shape. It is one of Runpod's own GitHub
-# builds of the baked Qwen3 image (jw5new6lqznp0u), not a new endpoint: registry.runpod.net images can only be pulled by the
-# endpoints Runpod built for them.
+# builds (nfr1cqjnqikgwm: deploy/runpod/Dockerfile, Qwen2.5-0.5B-Instruct baked in), not a new endpoint: registry.runpod.net
+# images can only be pulled by the endpoints Runpod built for them, and the sibling Qwen3-8B build (jw5new6lqznp0u) answers
+# every PATCH with 500. The 0.5B model boots in seconds, which is what an hourly flow-of-data job wants.
 name: loadgen
 on:
   schedule:
@@ -32,7 +33,7 @@ jobs:
           RUNPOD_API_KEY_RW: ${{ secrets.RUNPOD_API_KEY_RW }}
           LOADGEN_ENDPOINT: ${{ secrets.LOADGEN_ENDPOINT }}
           LOADGEN_LABEL: ${{ vars.LOADGEN_LABEL || 'loadgen_4090_flashboot_on_baked' }}
-          LOADGEN_IMAGE: ${{ vars.LOADGEN_IMAGE || 'emberserve Qwen3-8B, weights baked in (loadgen)' }}
+          LOADGEN_IMAGE: ${{ vars.LOADGEN_IMAGE || 'emberserve Qwen2.5-0.5B-Instruct, weights baked in (loadgen)' }}
         run: |
           stamp="$(date -u +%Y%m%dT%H%MZ)"
           python tools/serverless_coldstart.py --mode queue --endpoint "$LOADGEN_ENDPOINT" --api-key "$RUNPOD_API_KEY_RW" \

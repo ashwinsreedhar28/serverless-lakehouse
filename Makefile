@@ -285,7 +285,7 @@ campaign-status:
 campaign-restore:
 	$(SF_PYTHON) tools/campaign.py restore 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
 
-# The load generator reuses one of Runpod's own builds of the baked Qwen3 image (a new endpoint cannot pull it: registry auth);
+# The load generator reuses one of Runpod's own builds of an emberserve image (a new endpoint cannot pull it: registry auth);
 # LOADGEN_ENDPOINT in snowflake/.env names it. `loadgen-setup` puts it into the shape the cost estimate assumes.
 loadgen-setup: $(SF_VENV)/.installed
 	$(SF_PYTHON) tools/runpod_endpoint.py configure "$(LOADGEN_ENDPOINT)" --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT \
