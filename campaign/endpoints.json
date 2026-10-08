@@ -1,0 +1,62 @@
+{
+ "baked": {
+  "endpoint_id": "h90byyjfb0ofbu",
+  "name": "pagedserve0929z",
+  "image": "registry.runpod.net/ashwinsreedhar28-emberserve-main-deploy-runpod-dockerfile-qwen3:038a1a253",
+  "original": {
+   "gpu": {
+    "pools": [
+     "ADA_24"
+    ],
+    "excludedTypes": []
+   },
+   "flashboot": "OFF",
+   "workers": {
+    "idleTimeout": 5,
+    "max": 0,
+    "min": 0
+   }
+  },
+  "prepared_at": "2026-10-08T02:36:25+00:00"
+ },
+ "fetched": {
+  "endpoint_id": "ri6eo614hmu510",
+  "name": "pagedserve0929x",
+  "image": "registry.runpod.net/ashwinsreedhar28-emberserve-slim-image-deploy-runpod-dockerfile-slim:038a1a253",
+  "original": {
+   "gpu": {
+    "pools": [
+     "ADA_24"
+    ],
+    "excludedTypes": []
+   },
+   "flashboot": "OFF",
+   "workers": {
+    "idleTimeout": 5,
+    "max": 0,
+    "min": 0
+   }
+  },
+  "prepared_at": "2026-10-08T02:36:25+00:00"
+ },
+ "wvllm": {
+  "endpoint_id": "rvy2p7bfia91fm",
+  "name": "pagedserve0929",
+  "image": "registry.runpod.net/runpod-workers-worker-vllm-main-dockerfile:26f892c0a",
+  "original": {
+   "gpu": {
+    "pools": [
+     "ADA_24"
+    ],
+    "excludedTypes": []
+   },
+   "flashboot": "OFF",
+   "workers": {
+    "idleTimeout": 5,
+    "max": 0,
+    "min": 0
+   }
+  },
+  "prepared_at": "2026-10-08T02:36:26+00:00"
+ }
+}

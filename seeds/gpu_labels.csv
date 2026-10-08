@@ -13,3 +13,6 @@ A100-vol-nocache-c1,network-volume run,A100,,inferred,label,cache-hit cycle 1; p
 A100-vol-nocache-c2,network-volume run,A100,,inferred,label,cache-hit cycle 2; price not recorded
 H100-vol2,network-volume run,H100,,inferred,label,network volume experiment; price not recorded
 H100-vol2-ghost,network-volume run,H100,,inferred,label,ghost worker (hung at model init); price not recorded
+A40,48 GB flex,A40,1.22,observed,campaign/grid.json (runpod.io/pricing Serverless 2026-10-07),measurement campaign: the series label names the GPU; pool AMPERE_48 with the A6000 excluded
+A100 80GB,80 GB flex,A100,2.72,observed,campaign/grid.json (runpod.io/pricing Serverless 2026-10-07),measurement campaign: pool AMPERE_80
+H100 80GB,80 GB PRO flex,H100,4.79,observed,campaign/grid.json (runpod.io/pricing Serverless 2026-10-07),measurement campaign: pool ADA_80_PRO
