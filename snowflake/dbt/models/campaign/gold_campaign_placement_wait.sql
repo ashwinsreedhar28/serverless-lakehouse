@@ -5,7 +5,8 @@
 select
     gpu_tier, gpu_model, flashboot, weights_mode, engine, slot_utc,
     sum(iff(ok, 1, 0))                                              as n_cold_ok,
-    sum(iff(not ok, 1, 0))                                          as n_failed,
+    sum(iff(not ok and not client_error, 1, 0))                     as n_failed,
+    sum(iff(client_error, 1, 0))                                    as n_client_errors,
     {{ pct('delay_ms', 0.5) }}                                      as delay_ms_p50,
     min(delay_ms)                                                   as delay_ms_min,
     max(delay_ms)                                                   as delay_ms_max,

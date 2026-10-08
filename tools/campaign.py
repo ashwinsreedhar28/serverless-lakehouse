@@ -202,7 +202,7 @@ def wait_unpaused(endpoint_id: str, key: str, max_wait_s: int = 180) -> float:
             break                                   # 404 for the fake job id is the expected answer once unpaused
         except urllib.error.URLError:
             time.sleep(10)
-    time.sleep(10)                                  # settle: the probe and the queue front-end are not the same cache
+    time.sleep(45)                                  # settle: the probe and the queue front-end are not the same cache (10 s still saw a 409)
     return time.time() - t0
 
 

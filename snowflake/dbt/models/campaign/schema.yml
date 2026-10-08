@@ -7,6 +7,10 @@ models:
         tests: [not_null, {accepted_values: {arguments: {values: ["campaign", "loadgen"]}}}]
       - name: slot_utc
         tests: [{accepted_values: {arguments: {values: ["00-06", "06-12", "12-18", "18-24"]}}}]
+      - name: phase_recorded
+        tests: [not_null, {accepted_values: {arguments: {values: ["cold", "warm"]}}}]
+      - name: client_error
+        tests: [not_null]
   - name: gold_campaign_placement_wait
     columns:
       - name: n_cold_ok
