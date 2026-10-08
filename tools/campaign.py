@@ -168,10 +168,39 @@ def set_cell(endpoint_id: str, c: dict, max_workers: int, idle_s: int) -> None:
     })
 
 
+def wait_unpaused(endpoint_id: str, key: str, max_wait_s: int = 180) -> float:
+    """After a 0→1 PATCH the job API can keep answering 409 ENDPOINT_PAUSED for a while (seen on the first cell of a lane after
+    a long pause), and a cold request that hits it is lost while the warm one that follows becomes the real cold start.
+    Wait for the control plane to report max=1, then probe a job route until it stops saying paused. Returns seconds waited."""
+    import urllib.error
+    import urllib.request
+    t0 = time.time()
+    while (rp.call("GET", f"/v2/serverless/{endpoint_id}").get("workers") or {}).get("max", 0) < 1:
+        if time.time() - t0 > max_wait_s:
+            sys.exit(f"{endpoint_id}: workers.max still 0 after {max_wait_s}s")
+        time.sleep(5)
+    while time.time() - t0 < max_wait_s:
+        req = urllib.request.Request(f"{rp.JOBS}/v2/{endpoint_id}/status/campaign-probe",
+                                     headers={"Authorization": f"Bearer {key}", "User-Agent": "serverless-lakehouse/campaign"})
+        try:
+            urllib.request.urlopen(req, timeout=30).read()
+            break                                   # any non-error answer: the job API sees the endpoint as live
+        except urllib.error.HTTPError as e:
+            if e.code == 409 and b"ENDPOINT_PAUSED" in e.read():
+                time.sleep(10)
+                continue
+            break                                   # 404 for the fake job id is the expected answer once unpaused
+        except urllib.error.URLError:
+            time.sleep(10)
+    time.sleep(10)                                  # settle: the probe and the queue front-end are not the same cache
+    return time.time() - t0
+
+
 def run_cell(c: dict, ep: dict, n_cold: int, key: str, stamp: str, idle_s: int) -> tuple[str, int, str]:
     cell, endpoint_id = c["cell"], ep["endpoint_id"]
     set_cell(endpoint_id, c, 1, idle_s)
-    time.sleep(5)
+    waited = wait_unpaused(endpoint_id, key)
+    print(f"  [{c['image']['slug']}] {cell}: unpaused after {waited:.0f}s", flush=True)
     out = OUT_DIR / f"serverless_coldstart_{cell}_{stamp}.json"
     cmd = [sys.executable, str(COLDSTART), "--mode", "queue", "--endpoint", endpoint_id, "--api-key", key,
            "--repeats", str(n_cold), "--idle-s", "0", "--zero-wait-s", "300", "--max-tokens", "16", "--timeout-s", "2700",
