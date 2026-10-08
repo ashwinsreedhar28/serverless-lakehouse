@@ -81,6 +81,11 @@ that cannot reach Maven Central.
   gold says. Run it locally with `make space` (localhost:8501). It is also packaged as a Docker-SDK Space
   (`space/Dockerfile`, port 7860; `make space-create-docker` / `make space-push-docker`) for an account with HF PRO.
 
+`make sf-dashboard` renders the same page from the Snowflake backend (`LAKEHOUSE.GOLD`, see below) and adds the sections
+only dbt has — the measurement campaign's placement wait by GPU tier, FlashBoot hits against the idle gap, cost per cell,
+and the Runpod account as the API saw it, day by day. The page says which backend built it (`backend snowflake` in the
+meta line); whichever was pushed to `main` last is what the Space serves.
+
 Both show: every cold start as a dot per engine and weights mode (log scale, FlashBoot hits hollow), worker-vllm's
 boot phases stacked per log, the engine comparison with its cohorts, fast cold responses (the FlashBoot proxy), $ per cold start (request-duration proxy), $ per
 1,000 scored articles, and TTFT against request rate for the Serverless sweeps.

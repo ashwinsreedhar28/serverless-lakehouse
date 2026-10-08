@@ -27,6 +27,7 @@
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #3fa83f; color-scheme: dark; }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.5; }
 .wrap { max-width: 1180px; margin: 0 auto; padding-block: 2rem 4rem; padding-inline: 16px; }
 @media (min-width: 720px) { .wrap { padding-inline: 24px; } }
@@ -152,8 +153,40 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
   <details class="tbl"><summary>Table view</summary><div class="tblwrap" id="tb-sweep"></div></details>
 </section>
 
+<section class="card" id="c-camp-wait" hidden>
+  <header><div><h2>Measurement campaign: placement wait by GPU tier</h2>
+  <p class="q">One dot per gold row (GPU × image × FlashBoot × six-hour UTC slot): the median delay of that cell's cold starts in that slot, before the job ran. Hollow dots are FlashBoot-on cells. The same three images are re-pointed at each GPU pool in turn, so a slow lane is the pool's availability as the scheduler experienced it, not a slower boot. Hover for the split between placement + image pull and engine boot where the worker timeline recorded it.</p></div>
+  <span class="src">gold_campaign_placement_wait</span></header>
+  <div class="legend" id="lg-camp-wait"></div>
+  <div class="chart" id="ch-camp-wait"></div>
+  <details class="tbl"><summary>Table view</summary><div class="tblwrap" id="tb-camp-wait"></div></details>
+</section>
+
+<div id="camp-two" hidden>
+<section class="card" id="c-camp-cost">
+  <header><div><h2>Cold-start cost per cell</h2>
+  <p class="q">Request-duration proxy summed over the cell's successful cold starts, beside what Runpod billed the cell's endpoint in the hours it ran (hover). Cells share an endpoint per image, so the billed figure is per endpoint-hour, not per cell.</p></div>
+  <span class="src">gold_campaign_cost_by_gpu_image</span></header>
+  <div class="chart" id="ch-camp-cost"></div>
+  <details class="tbl"><summary>Table view</summary><div class="tblwrap" id="tb-camp-cost"></div></details>
+</section>
+<section class="card" id="c-camp-fb">
+  <header><div><h2>FlashBoot hits against the idle gap</h2>
+  <p class="q">For cold-labelled requests, the time since the previous request on the same endpoint, bucketed, against the share answered under the hit threshold. With FlashBoot off the rate should be ~0 in every bucket; with it on, the bucket where the rate drops is how long Runpod keeps a worker resumable.</p></div>
+  <span class="src">gold_campaign_flashboot_vs_idle</span></header>
+  <div class="tblwrap" id="tb-camp-fb"></div>
+</section>
+</div>
+
+<section class="card" id="c-runpod" hidden>
+  <header><div><h2>The Runpod account, as the API saw it</h2>
+  <p class="q">One row per endpoint per UTC day from the poller's snapshots: configuration at the last poll, workers seen and the most active at once, worker appearances (≈ scale-ups, derived by diffing consecutive polls), the endpoint's own job counters moved, and what Runpod billed for the day.</p></div>
+  <span class="src">gold_runpod_endpoint_daily</span></header>
+  <div class="tblwrap" id="tb-runpod"></div>
+</section>
+
 <footer>
-  <p>Built by <code>make dashboard</code> from the gold tables under <code>data/lakehouse/gold/</code>. The same tables are rendered as markdown in <code>docs/gold_report.md</code>; the method, schemas and design decisions are in the <a href="https://github.com/ashwinsreedhar28/serverless-lakehouse">README</a>. Medians are Spark <code>percentile_approx</code> (an observed value, no interpolation). Costs are a request-duration proxy with the formula stated; fast cold responses are a threshold proxy for FlashBoot, not Runpod's own accounting; cohorts are observational, not a controlled experiment.</p>
+  <p id="foot"></p>
 </footer>
 </div>
 <div id="tip" role="tooltip"></div>
@@ -204,7 +237,11 @@ const GOLD = /*GOLD_JSON*/null;
   // ---- data ------------------------------------------------------------------------------------------
   const M = GOLD.meta, EV = GOLD.gold_coldstart_events, BOOT = GOLD.gold_worker_boot_phases, ENG = GOLD.gold_engine_comparison,
         FB = GOLD.gold_flashboot_hit_rate, SC = GOLD.gold_scoring_cost_per_batch, SW = GOLD.gold_sweep_latency;
-  $("meta").textContent = `built ${M.built_at_utc} · ${M.repo} · ${EV.length} cold starts · ${BOOT.length} worker boots · ${SW.length} sweep runs`;
+  const backend = M.backend || "spark";
+  $("meta").textContent = `built ${M.built_at_utc} · ${M.repo} · backend ${backend} · ${EV.length} cold starts · ${BOOT.length} worker boots · ${SW.length} sweep runs`;
+  $("foot").innerHTML = backend === "snowflake"
+    ? `Built by <code>make sf-dashboard</code> from <code>LAKEHOUSE.GOLD</code> (dbt models over the Snowflake bronze layer); <code>make dashboard</code> renders the same page from the Spark/Delta gold, and <code>docs/parity_report.md</code> shows the two agree. Medians are Snowflake <code>percentile_disc</code>, the counterpart of Spark's <code>percentile_approx</code> (an observed value, no interpolation). Costs are a request-duration proxy with the formula stated; fast cold responses are a threshold proxy for FlashBoot, not Runpod's own accounting; cohorts are observational, not a controlled experiment. The method, schemas and design decisions are in the <a href="https://github.com/ashwinsreedhar28/serverless-lakehouse">README</a>.`
+    : `Built by <code>make dashboard</code> from the gold tables under <code>data/lakehouse/gold/</code>. The same tables are rendered as markdown in <code>docs/gold_report.md</code>; the method, schemas and design decisions are in the <a href="https://github.com/ashwinsreedhar28/serverless-lakehouse">README</a>. Medians are Spark <code>percentile_approx</code> (an observed value, no interpolation). Costs are a request-duration proxy with the formula stated; fast cold responses are a threshold proxy for FlashBoot, not Runpod's own accounting; cohorts are observational, not a controlled experiment.`;
   $("thr").textContent = (M.flashboot_hit_ms / 1000).toFixed(0);
 
   // ---- KPIs ------------------------------------------------------------------------------------------
@@ -329,8 +366,9 @@ const GOLD = /*GOLD_JSON*/null;
   ], FB);
 
   // ---- bars: cost per cold start, cost per 1k articles ---------------------------------------------------
-  function bars(el, items, fmtv, aria) {
-    const W = 560, L = 270, R = 70, rowH = 30, T = 8, H = T + items.length * rowH + 10, max = Math.max(...items.map((d) => d.v)) * 1.05;
+  function bars(el, items, fmtv, aria, size) {
+    const { W, L, R } = Object.assign({ W: 560, L: 270, R: 70 }, size || {});
+    const rowH = 30, T = 8, H = T + items.length * rowH + 10, max = Math.max(...items.map((d) => d.v)) * 1.05;
     const x = (v) => L + v / max * (W - L - R);
     let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(aria)}">`;
     items.forEach((d, i) => {
@@ -388,6 +426,103 @@ const GOLD = /*GOLD_JSON*/null;
       { h: "TTFT p50", num: true, f: (r) => fmt.s(r.ttft_ms_p50) }, { h: "TTFT p99", num: true, f: (r) => fmt.s(r.ttft_ms_p99) }, { h: "e2e p99", num: true, f: (r) => fmt.s(r.e2e_ms_p99) },
     ], SW);
   })();
+
+  // ---- measurement campaign + the Runpod live source (dbt-only tables; present in the Snowflake export) ----------
+  const CW = GOLD.gold_campaign_placement_wait || [], CF = GOLD.gold_campaign_flashboot_vs_idle || [],
+        CC = GOLD.gold_campaign_cost_by_gpu_image || [], RD = GOLD.gold_runpod_endpoint_daily || [];
+  const GPU_ORDER = ["RTX 4090", "A40", "A100 80GB", "H100 80GB"];
+  const imageKey = (r) => `${r.engine} · ${r.weights_mode}`;
+  const IMAGE_ORDER = ["emberserve · baked", "emberserve · fetched", "worker-vllm · fetched"];
+  const IMAGE_COLOR = { "emberserve · baked": SERIES[0], "emberserve · fetched": SERIES[2], "worker-vllm · fetched": SERIES[1] };
+  const gpuIdx = (g) => { const i = GPU_ORDER.indexOf(g); return i < 0 ? 99 : i; };
+  const imgIdx = (k) => { const i = IMAGE_ORDER.indexOf(k); return i < 0 ? 99 : i; };
+  const campaignRows = CW.filter((r) => r.n_cold_ok > 0);
+  if (campaignRows.length) {
+    const nCold = campaignRows.reduce((a, r) => a + r.n_cold_ok, 0);
+    const billed = RD.reduce((a, r) => a + (r.total_usd || 0), 0);
+    $("kpis").insertAdjacentHTML("beforeend",
+      `<div class="kpi"><div class="label">Campaign cold starts so far</div><div class="value">${fmt.int(nCold)}${M.campaign_planned_cold_starts ? `<small>of ${fmt.int(M.campaign_planned_cold_starts)} planned</small>` : ""}</div><div class="sub">${[...new Set(campaignRows.map((r) => r.gpu_model))].length} GPUs × 2 FlashBoot settings × 3 images, ${[...new Set(campaignRows.map((r) => r.slot_utc))].length} time-of-day slots seen</div></div>` +
+      (RD.length ? `<div class="kpi"><div class="label">Runpod billed, every endpoint (API)</div><div class="value">${fmt.usd(billed)}</div><div class="sub">sum of gold_runpod_endpoint_daily.total_usd over ${RD.length} endpoint-days polled</div></div>` : ""));
+
+    // placement wait: dot plot, one lane per GPU × image
+    (function () {
+      const laneOf = (r) => `${r.gpu_model} · ${imageKey(r)}`;
+      const lanes = [...new Set(campaignRows.map(laneOf))].sort((a, b) => {
+        const ra = campaignRows.find((r) => laneOf(r) === a), rb = campaignRows.find((r) => laneOf(r) === b);
+        return gpuIdx(ra.gpu_model) - gpuIdx(rb.gpu_model) || imgIdx(imageKey(ra)) - imgIdx(imageKey(rb));
+      });
+      const W = 920, L = 250, R = 24, T = 18, rowH = 40, H = T + lanes.length * rowH + 40;
+      const xs = campaignRows.map((r) => r.delay_ms_p50).filter((v) => v > 0);
+      const lo = Math.log10(Math.min(...xs) * 0.8), hi = Math.log10(Math.max(...xs) * 1.3);
+      const x = (ms) => L + (Math.log10(ms) - lo) / (hi - lo) * (W - L - R);
+      const ticks = [1000, 5000, 10000, 30000, 60000, 120000, 300000, 600000, 1200000].filter((t) => Math.log10(t) > lo && Math.log10(t) < hi);
+      let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Campaign cold-start placement wait per GPU and image, log scale">`;
+      g += `<g class="grid">` + ticks.map((t) => `<line x1="${x(t)}" x2="${x(t)}" y1="${T}" y2="${H - 36}"/>`).join("") + `</g>`;
+      g += ticks.map((t) => `<text x="${x(t)}" y="${H - 18}" text-anchor="middle">${t < 60000 ? t / 1000 + " s" : t / 60000 + " min"}</text>`).join("");
+      g += `<text x="${W - R}" y="${H - 2}" text-anchor="end">median delay before the job ran, per cell and slot (log scale)</text>`;
+      const jit = (i) => ((i * 7919) % 11 - 5) * 1.5;
+      lanes.forEach((lane, li) => {
+        const y = T + li * rowH + rowH / 2;
+        const rows = campaignRows.filter((r) => laneOf(r) === lane);
+        const n = rows.reduce((a, r) => a + r.n_cold_ok, 0), fails = rows.reduce((a, r) => a + r.n_failed, 0);
+        g += `<line class="axis" x1="${L}" x2="${W - R}" y1="${y + rowH / 2}" y2="${y + rowH / 2}" stroke="var(--grid)"/>`;
+        g += `<text class="lane" x="${L - 12}" y="${y - 3}" text-anchor="end">${esc(lane)}</text><text x="${L - 12}" y="${y + 13}" text-anchor="end">n=${n}${fails ? ` · ${fails} failed` : ""}</text>`;
+        rows.forEach((r, i) => {
+          const cx = x(r.delay_ms_p50), cy = y + jit(i), col = IMAGE_COLOR[imageKey(r)] || SERIES[3];
+          const t = `<b>${esc(r.gpu_model)} · ${esc(imageKey(r))} · FlashBoot ${esc(r.flashboot)}</b><br>slot ${esc(r.slot_utc)} UTC · ${r.n_cold_ok} ok${r.n_failed ? ` · ${r.n_failed} failed` : ""}${r.n_client_errors ? ` · ${r.n_client_errors} client errors` : ""}<br>delay p50 ${fmt.s(r.delay_ms_p50)} (${fmt.s(r.delay_ms_min)} – ${fmt.s(r.delay_ms_max)})${r.placement_pull_create_s_p50 != null ? `<br>placement + pull + create ${fmt.sec(r.placement_pull_create_s_p50)} · engine boot ${fmt.sec(r.engine_boot_s_p50)}` : ""}<br>${r.n_workers_seen} worker${r.n_workers_seen === 1 ? "" : "s"} · tier ${esc(r.gpu_tier || "–")}`;
+          g += r.flashboot === "on"
+            ? `<circle class="hit" cx="${cx}" cy="${cy}" r="5" fill="var(--surface)" stroke="${col}"/>`
+            : `<circle cx="${cx}" cy="${cy}" r="5" fill="${col}" stroke="var(--surface)" stroke-width="1.5"/>`;
+          g += `<circle class="hot" cx="${cx}" cy="${cy}" r="9" fill="transparent" data-tip="${esc(t)}"/>`;
+        });
+      });
+      g += `</svg>`;
+      $("ch-camp-wait").innerHTML = g; bindTips($("ch-camp-wait"));
+      legend($("lg-camp-wait"), IMAGE_ORDER.filter((k) => campaignRows.some((r) => imageKey(r) === k)).map((k) => ({ color: IMAGE_COLOR[k], label: k })).concat([{ cls: "ring", label: "FlashBoot on" }]));
+      table($("tb-camp-wait"), [
+        { h: "gpu", k: "gpu_model" }, { h: "tier", k: "gpu_tier" }, { h: "image", f: (r) => esc(imageKey(r)) }, { h: "flashboot", k: "flashboot" }, { h: "slot (UTC)", k: "slot_utc" },
+        { h: "ok", k: "n_cold_ok", num: true }, { h: "failed", num: true, f: (r) => r.n_failed ? String(r.n_failed) : "" }, { h: "client err", num: true, f: (r) => r.n_client_errors ? String(r.n_client_errors) : "" },
+        { h: "delay p50", num: true, f: (r) => fmt.s(r.delay_ms_p50) }, { h: "min", num: true, f: (r) => fmt.s(r.delay_ms_min) }, { h: "max", num: true, f: (r) => fmt.s(r.delay_ms_max) },
+        { h: "placement+pull p50", num: true, f: (r) => fmt.sec(r.placement_pull_create_s_p50) }, { h: "engine boot p50", num: true, f: (r) => fmt.sec(r.engine_boot_s_p50) }, { h: "workers", k: "n_workers_seen", num: true },
+      ], [...campaignRows].sort((a, b) => gpuIdx(a.gpu_model) - gpuIdx(b.gpu_model) || imgIdx(imageKey(a)) - imgIdx(imageKey(b)) || (a.flashboot > b.flashboot ? 1 : -1) || (a.slot_utc > b.slot_utc ? 1 : -1)));
+      $("c-camp-wait").hidden = false;
+    })();
+
+    // FlashBoot vs idle gap: table
+    const GAP_ORDER = ["first", "<2 min", "2-10 min", "10-60 min", ">60 min"];
+    table($("tb-camp-fb"), [
+      { h: "gpu", k: "gpu_model" }, { h: "image", f: (r) => esc(imageKey(r)) }, { h: "flashboot", k: "flashboot" }, { h: "kind", k: "campaign_kind" }, { h: "gap since prev", k: "gap_bucket" },
+      { h: "cold", k: "n_cold", num: true }, { h: "hits", k: "n_hits", num: true },
+      { h: "hit rate", f: (r) => r.hit_rate == null ? "–" : `<span class="bar" style="width:${Math.round(r.hit_rate * 60)}px"></span>${fmt.pct(r.hit_rate)}` },
+      { h: "hit p50", num: true, f: (r) => fmt.s(r.hit_delay_ms_p50) }, { h: "miss p50", num: true, f: (r) => fmt.s(r.miss_delay_ms_p50) }, { h: "gap p50", num: true, f: (r) => fmt.sec(r.gap_s_p50) },
+    ], [...CF].sort((a, b) => (a.campaign_kind > b.campaign_kind ? 1 : a.campaign_kind < b.campaign_kind ? -1 : 0) || gpuIdx(a.gpu_model) - gpuIdx(b.gpu_model) || imgIdx(imageKey(a)) - imgIdx(imageKey(b)) || (a.flashboot > b.flashboot ? 1 : a.flashboot < b.flashboot ? -1 : 0) || GAP_ORDER.indexOf(a.gap_bucket) - GAP_ORDER.indexOf(b.gap_bucket)));
+
+    // cost per cell: bars
+    const cells = CC.filter((r) => r.est_cost_usd_total_proxy != null).sort((a, b) => b.est_cost_usd_total_proxy - a.est_cost_usd_total_proxy);
+    bars($("ch-camp-cost"), cells.map((r) => ({ label: r.cell, v: r.est_cost_usd_total_proxy, color: IMAGE_COLOR[imageKey(r)] || SERIES[3],
+      tip: `<b>${esc(r.cell)}</b> · ${esc(r.gpu_model)} · ${esc(imageKey(r))} · FlashBoot ${esc(r.flashboot)}<br>${fmt.usd(r.est_cost_usd_total_proxy)} proxy over ${r.n_cold_ok} cold starts (${fmt.usd(r.est_cost_usd_p50_proxy)} p50 each)${r.n_hits ? ` · ${r.n_hits} FlashBoot hits` : ""}<br>delay p50 ${fmt.s(r.delay_ms_p50)} · request ${fmt.sec(r.request_duration_s_p50)} p50<br>endpoint ${esc(r.endpoint_id)} billed ${fmt.usd(r.billed_usd_endpoint_hours)} over ${r.n_billed_hours || 0} shared hour${r.n_billed_hours === 1 ? "" : "s"}` })),
+      fmt.usd, "Estimated dollars per campaign cell (request-duration proxy)", { W: 920, L: 200, R: 90 });
+    table($("tb-camp-cost"), [
+      { h: "cell", k: "cell" }, { h: "gpu", k: "gpu_model" }, { h: "image", f: (r) => esc(imageKey(r)) }, { h: "flashboot", k: "flashboot" }, { h: "endpoint", k: "endpoint_id" },
+      { h: "cold ok", k: "n_cold_ok", num: true }, { h: "hits", num: true, f: (r) => r.n_hits ? String(r.n_hits) : "" }, { h: "delay p50", num: true, f: (r) => fmt.s(r.delay_ms_p50) },
+      { h: "$ / cold (proxy)", num: true, f: (r) => fmt.usd(r.est_cost_usd_p50_proxy) }, { h: "$ total (proxy)", num: true, f: (r) => fmt.usd(r.est_cost_usd_total_proxy) },
+      { h: "$ billed, endpoint-hours", num: true, f: (r) => fmt.usd(r.billed_usd_endpoint_hours) }, { h: "hours", num: true, f: (r) => r.n_billed_hours == null ? "–" : String(r.n_billed_hours) },
+      { h: "first", f: (r) => fmt.date(r.first_request_utc) }, { h: "last", f: (r) => fmt.date(r.last_request_utc) },
+    ], cells);
+    $("camp-two").hidden = false;
+  }
+  if (RD.length) {
+    const rows = [...RD].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0) || (a.name || "").localeCompare(b.name || ""));
+    const maxUsd = Math.max(...rows.map((r) => r.total_usd || 0), 0.01);
+    table($("tb-runpod"), [
+      { h: "day (UTC)", k: "day" }, { h: "endpoint", f: (r) => `${esc(r.name || "")} <span class="muted">${esc(r.endpoint_id)}</span>` }, { h: "flashboot", k: "flashboot" },
+      { h: "max workers", k: "workers_max", num: true }, { h: "pools", f: (r) => esc(Array.isArray(r.gpu_pools) ? r.gpu_pools.join(", ") : (r.gpu_pools || "")) },
+      { h: "polls", k: "n_polls", num: true }, { h: "workers seen", k: "n_workers_seen", num: true }, { h: "max active", k: "max_active_workers", num: true },
+      { h: "appeared", k: "n_worker_appearances", num: true }, { h: "jobs done Δ", num: true, f: (r) => r.jobs_completed_delta == null ? "–" : fmt.int(r.jobs_completed_delta) },
+      { h: "billed", num: true, f: (r) => r.total_usd == null ? "–" : `<span class="bar" style="width:${Math.round(r.total_usd / maxUsd * 60)}px"></span>${fmt.usd(r.total_usd)}` },
+    ], rows);
+    $("c-runpod").hidden = false;
+  }
 })();
 </script>
 <!--ARTIFACT-END-->

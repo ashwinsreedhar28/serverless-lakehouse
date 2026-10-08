@@ -45,6 +45,7 @@
 #   make loadgen-off / loadgen-on  kill switch: workers.max 0 / 1 (LOADGEN_ENDPOINT in snowflake/.env)
 #   make land-runpod               land the runpod root only (generator + campaign runs)
 #   make sf-sync                   the routine once the GitHub schedules run: git pull, land-runpod, bronze (--prune), dbt, poll, load, spend
+#   make sf-dashboard              docs/dashboard.html from LAKEHOUSE.GOLD (+ campaign and Runpod live-source panels); push = HF Space update
 #
 # Overrides:  EMBERSERVE_DIR, PULSE_DIR (source roots), FORMAT=delta|parquet, RUN_LABEL
 
@@ -71,7 +72,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-setup land-runpod sf-sync loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-setup land-runpod sf-sync loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dashboard sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -247,6 +248,11 @@ sf-dbt-test: $(SF_VENV)/.installed $(SF_LOGS)
 
 sf-parity: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.parity 2>&1 | tee $(SF_LOGS)/sf-parity.log; exit $${PIPESTATUS[0]}
+
+# The same static page as `make dashboard`, built from LAKEHOUSE.GOLD instead of Spark gold — plus the campaign and
+# Runpod live-source sections only dbt has. Pushing docs/dashboard.html to main re-uploads it to the Hugging Face Space.
+sf-dashboard: $(SF_VENV)/.installed $(SF_LOGS)
+	$(SF_PYTHON) -m lakehouse.sf.dashboard 2>&1 | tee $(SF_LOGS)/sf-dashboard.log; exit $${PIPESTATUS[0]}
 
 sf-show: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.show $(if $(SF_SHOW_STAGE),--stage,) 2>&1 | tee $(SF_LOGS)/sf-show.log; exit $${PIPESTATUS[0]}
