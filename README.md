@@ -359,6 +359,23 @@ starts spread over four UTC slots a day, `campaign/estimate.csv` approved before
 Runpod's own billing records with a 20 % overrun stop). Both land through `make land --only runpod`, the same
 `coldstart_series` format and the same bronze tables, so the Spark side picks them up on the next `make all`.
 
+What the first two campaign slots taught about the API, each now handled in `tools/campaign.py`:
+
+- `PATCH /v2/serverless/{id}` **merges** into the stored object. An endpoint whose stored `gpu` carries both
+  `allowedCudaVersions` and `minCudaVersion` (console-made ones can) rejects any `gpu` patch as "mutually exclusive",
+  `null` fails validation, so the list has to be sent *empty* alongside the floor you want.
+- `minCudaVersion` is a placement filter, and the build endpoints were created with `12.0`. A CUDA 12.8 image placed on an
+  older-driver host crash-loops ("unsatisfied condition: cuda>=12.8") — **and the worker is billed the whole time** even
+  though the container never starts ($0.70 for 50 minutes of a 4090, in `campaign/spend_ack.csv`). Each image now
+  declares `min_cuda_version` in `campaign/grid.json`.
+- Raising `workers.max` from 0 propagates to the job API late: the first `/runsync` after the change can get `409
+  ENDPOINT_PAUSED` for ten seconds or more. The driver polls the endpoint, probes a job route, and still waits before the
+  first request; when a cold request is lost anyway, the warm request that follows waits for the fresh worker and the
+  script marks it `cold: true` — `silver_campaign_requests` counts that as the cell's cold start and keeps the client-side
+  miss apart from placement failures (`n_client_errors`).
+- A slot killed mid-way leaves a job in the queue; with `max 0` it waits there and would run first — and skew the next
+  cold start — the moment a later slot sets `max 1`. `campaign-park` purges every queue.
+
 ## Audit
 
 Before publishing, the whole repo was handed to an external reviewer model (`scripts/audit_bundle.py` packs it;
