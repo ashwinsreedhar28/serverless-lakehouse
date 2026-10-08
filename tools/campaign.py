@@ -146,14 +146,14 @@ def cold_starts_done(cell: str) -> int:
 
 def gpu_body(endpoint_id: str, pools: list[str], exclude: list[str]) -> dict:
     """The endpoint's CUDA constraint carried over explicitly: the API rejects a PATCH to `gpu` when the stored object has both
-    allowedCudaVersions and minCudaVersion (console-made endpoints can), so send one and null the other."""
+    allowedCudaVersions and minCudaVersion (console-made endpoints can), and `minCudaVersion: null` fails validation
+    (422 "want string") — so send exactly one of the two keys and leave the other out."""
     cur = (rp.call("GET", f"/v2/serverless/{endpoint_id}").get("gpu") or {})
-    allowed = cur.get("allowedCudaVersions") or []
     body = {"pools": pools, "excludedTypes": exclude, "count": cur.get("count") or 1}
-    if allowed:
-        body["allowedCudaVersions"], body["minCudaVersion"] = allowed, None
-    else:
-        body["allowedCudaVersions"], body["minCudaVersion"] = [], cur.get("minCudaVersion")
+    if cur.get("allowedCudaVersions"):
+        body["allowedCudaVersions"] = cur["allowedCudaVersions"]
+    elif cur.get("minCudaVersion"):
+        body["minCudaVersion"] = cur["minCudaVersion"]
     return body
 
 
