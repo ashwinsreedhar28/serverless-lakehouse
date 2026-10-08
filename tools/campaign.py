@@ -109,7 +109,8 @@ def seed_row(c: dict) -> list[str]:
 
 def cmd_prepare(a) -> int:
     g = grid()
-    eps = load_endpoints()
+    slugs = {img["slug"] for img in g["images"]}
+    eps = {k: v for k, v in load_endpoints().items() if k in slugs and "original" in v}   # drop entries from the old per-cell design
     have = SEEDS.read_text(encoding="utf-8")
     for img in g["images"]:
         ep_id = img["reference_endpoint"]
@@ -235,6 +236,8 @@ def cmd_status(a) -> int:
 
 def cmd_park(a, max_workers: int = 0) -> int:
     for slug, ep in load_endpoints().items():
+        if "original" not in ep:
+            continue
         rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", {"workers": {"min": 0, "max": max_workers}})
         print(f"  {slug}: {ep['endpoint_id']} workers.max = {max_workers}")
     return 0
@@ -242,6 +245,8 @@ def cmd_park(a, max_workers: int = 0) -> int:
 
 def cmd_restore(a) -> int:
     for slug, ep in load_endpoints().items():
+        if "original" not in ep:
+            continue
         o = ep["original"]
         body = {"gpu": {"pools": o["gpu"]["pools"], "excludedTypes": o["gpu"]["excludedTypes"]}, "flashboot": o["flashboot"],
                 "workers": {"min": 0, "max": 0, "idleTimeout": (o.get("workers") or {}).get("idleTimeout", 5)}}
