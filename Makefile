@@ -229,7 +229,7 @@ land-runpod: $(SF_VENV)/.installed
 # The Mac's routine once the GitHub schedules are live: pull what the load generator committed, land it, load it, rebuild,
 # refresh the spend log, and prune the shared manifest snapshot to this (complete) landing.
 sf-sync:
-	git pull --rebase -q
+	git pull --rebase --autostash -q
 	$(MAKE) land-runpod && $(MAKE) sf-bronze SF_BRONZE_FLAGS=--prune && $(MAKE) sf-silver-gold sf-runpod-poll sf-runpod-load sf-spend
 
 sf-bronze: $(SF_VENV)/.installed $(SF_LOGS)
