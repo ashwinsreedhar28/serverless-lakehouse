@@ -289,7 +289,7 @@ campaign-restore:
 # LOADGEN_ENDPOINT in snowflake/.env names it. `loadgen-setup` puts it into the shape the cost estimate assumes.
 loadgen-setup: $(SF_VENV)/.installed
 	$(SF_PYTHON) tools/runpod_endpoint.py configure "$(LOADGEN_ENDPOINT)" --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT \
-	  --idle 10 --max 1 --min-cuda 12.8 --env LAKEHOUSE_CELL=loadgen $(if $(DRY),--dry-run,)
+	  --idle 10 --max 1 --min-cuda 12.8 $(if $(DRY),--dry-run,)
 
 loadgen-off:
 	$(SF_PYTHON) tools/runpod_endpoint.py off "$(LOADGEN_ENDPOINT)"

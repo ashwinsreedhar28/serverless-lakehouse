@@ -156,12 +156,13 @@ def main(argv: list[str] | None = None) -> int:
         floor = a.min_cuda or (cur.get("gpu") or {}).get("minCudaVersion")
         if floor:
             gpu["allowedCudaVersions"], gpu["minCudaVersion"] = [], floor     # PATCH merges: empty the list, keep one key
-        env = dict(cur.get("env") or {})
-        env["LAKEHOUSE"] = "1"
-        for kv in a.env:
-            k, _, v = kv.partition("=")
-            env[k] = v
-        body = {"gpu": gpu, "flashboot": a.flashboot, "workers": {"min": 0, "max": a.max, "idleTimeout": a.idle}, "env": env}
+        body = {"gpu": gpu, "flashboot": a.flashboot, "workers": {"min": 0, "max": a.max, "idleTimeout": a.idle}}
+        if a.env:                                    # env in a PATCH returned 500 "failed to update endpoint" once; only on request
+            env = dict(cur.get("env") or {})
+            for kv in a.env:
+                k, _, v = kv.partition("=")
+                env[k] = v
+            body["env"] = env
         print(json.dumps(body, indent=1), file=sys.stderr)
         print(f"  {cur.get('name')} ({a.id}): {g['name']} in pool {pool} (${g['price_hr']}/hr), image {cur.get('image')}", file=sys.stderr)
         if a.dry_run:
