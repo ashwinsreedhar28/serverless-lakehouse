@@ -12,7 +12,7 @@ pagedserve_slim_qwen3_8b_4090_graphsfirst_2,emberserve,d5e955e,Qwen3-8B,RTX 4090
 pagedserve_slim_qwen3_8b_4090_off_v2,emberserve,fa672f0,Qwen3-8B,RTX 4090,off,label,fetched,,
 vllm_qwen3_8b_4090_flashboot_on,worker-vllm,v2.28.0,Qwen3-8B,RTX 4090,on,note (label at run time said off; FlashBoot was on),fetched,,samples 1-2 full boots (FlashBoot misses); sample 3 a FlashBoot resume (532 ms)
 vllm_qwen3_8b_4090_flashboot_off_b,worker-vllm,v2.28.0,Qwen3-8B,RTX 4090,off,label,fetched,,
-loadgen_4090_flashboot_on_baked,emberserve,,Qwen3-8B,RTX 4090,on,api (endpoint config: FLASHBOOT),baked,27,hourly load generator (.github/workflows/loadgen.yml); one cold + one warm request per run
+loadgen_4090_flashboot_on_baked,emberserve,,Qwen2.5-0.5B-Instruct,RTX 4090,on,api (endpoint config: FLASHBOOT),baked,8,hourly load generator (.github/workflows/loadgen.yml) on endpoint nfr1cqjnqikgwm (Runpod build of deploy/runpod/Dockerfile: Qwen2.5-0.5B-Instruct baked in); one cold + one warm request per run
 4090_fboff_baked,emberserve,,Qwen3-8B,RTX 4090,off,"api (endpoint config, campaign)",baked,27,"campaign cell; endpoint zg1jo6xm6abvr7; emberserve, Qwen3-8B baked into the image (deploy/runpod/Dockerfile.qwen3)"
 4090_fbon_baked,emberserve,,Qwen3-8B,RTX 4090,on,"api (endpoint config, campaign)",baked,27,"campaign cell on endpoint h90byyjfb0ofbu; emberserve, Qwen3-8B baked into the image (deploy/runpod/Dockerfile.qwen3)"
 a40_fboff_baked,emberserve,,Qwen3-8B,A40,off,"api (endpoint config, campaign)",baked,27,"campaign cell on endpoint h90byyjfb0ofbu; emberserve, Qwen3-8B baked into the image (deploy/runpod/Dockerfile.qwen3)"
