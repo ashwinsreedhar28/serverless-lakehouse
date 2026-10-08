@@ -2,7 +2,7 @@
 {#- Every request of a campaign cell or the load generator, with the cell's design (GPU, FlashBoot, image) from the seed row
     the campaign driver wrote, the gap since the previous request on the same endpoint, and the UTC time-of-day slot. -#}
 with req as (
-    select r.*, s.notes as series_notes
+    select r.* exclude (silver_built_at), s.notes as series_notes
     from {{ ref('silver_coldstart_requests') }} r
     join {{ ref('dim_coldstart_series') }} s on s.series_label = r.series_label
     where s.notes like 'campaign cell%' or r.series_label like 'loadgen%'
