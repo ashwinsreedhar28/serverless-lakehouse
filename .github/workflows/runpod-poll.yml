@@ -29,4 +29,7 @@ jobs:
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
         run: python tools/runpod_poll.py
       - uses: actions/upload-artifact@v4
-        with: { name: runpod-poll-${{ github.run_id }}, path: data/runpod/polls/*.json, retention-days: 7 }
+        with:
+          name: "runpod-poll-${{ github.run_id }}"
+          path: data/runpod/polls/*.json
+          retention-days: 7
