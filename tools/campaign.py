@@ -144,16 +144,26 @@ def cold_starts_done(cell: str) -> int:
     return n
 
 
-def gpu_body(endpoint_id: str, pools: list[str], exclude: list[str]) -> dict:
+def _ver(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in v.split("."))
+
+
+def gpu_body(endpoint_id: str, pools: list[str], exclude: list[str], min_cuda: str | None = None) -> dict:
     """The endpoint's CUDA constraint carried over explicitly: the API rejects a PATCH to `gpu` when the stored object has both
     allowedCudaVersions and minCudaVersion (console-made endpoints can), and `minCudaVersion: null` fails validation
-    (422 "want string") — so send exactly one of the two keys and leave the other out."""
+    (422 "want string") — so send exactly one of the two keys and leave the other out.
+    `min_cuda` (grid.json images[].min_cuda_version) raises the floor to what the image needs: the build endpoints were created
+    with minCudaVersion 12.0, and on an A40 host with an older driver the CUDA 12.8 image crash-looped ("unsatisfied
+    condition: cuda>=12.8") instead of booting — the worker never ran, the cell never returned."""
     cur = (rp.call("GET", f"/v2/serverless/{endpoint_id}").get("gpu") or {})
     body = {"pools": pools, "excludedTypes": exclude, "count": cur.get("count") or 1}
-    if cur.get("minCudaVersion"):
+    floor = cur.get("minCudaVersion")
+    if min_cuda and (not floor or _ver(min_cuda) > _ver(floor)):
+        floor = min_cuda
+    if floor:
         # The PATCH is merged into the stored object, so a stored list must be *emptied*, not omitted ([] passes the
         # mutual-exclusion check; null does not pass validation). worker-vllm stores ["13.0"] + "13.0" — keep the min.
-        body["allowedCudaVersions"], body["minCudaVersion"] = [], cur["minCudaVersion"]
+        body["allowedCudaVersions"], body["minCudaVersion"] = [], floor
     elif cur.get("allowedCudaVersions"):
         body["allowedCudaVersions"] = cur["allowedCudaVersions"]
     return body
@@ -162,7 +172,7 @@ def gpu_body(endpoint_id: str, pools: list[str], exclude: list[str]) -> dict:
 def set_cell(endpoint_id: str, c: dict, max_workers: int, idle_s: int) -> None:
     pool, exclude, _ = rp.resolve_gpu(c["gpu"]["type"])
     rp.call("PATCH", f"/v2/serverless/{endpoint_id}", {
-        "gpu": gpu_body(endpoint_id, [pool], exclude),
+        "gpu": gpu_body(endpoint_id, [pool], exclude, c["image"].get("min_cuda_version")),
         "flashboot": c["flashboot"],
         "workers": {"min": 0, "max": max_workers, "idleTimeout": idle_s},
     })
