@@ -357,7 +357,11 @@ campaign (`tools/campaign.py`: GPU × FlashBoot × image cells, each run by re-p
 the cell's GPU pool and FlashBoot setting — Runpod's GitHub-built images can only be pulled by the endpoint that built them — cold
 starts spread over four UTC slots a day, `campaign/estimate.csv` approved before `create`, `docs/spend_log.md` from
 Runpod's own billing records with a 20 % overrun stop). Both land through `make land --only runpod`, the same
-`coldstart_series` format and the same bronze tables, so the Spark side picks them up on the next `make all`.
+`coldstart_series` format and the same bronze tables, so the Spark side picks them up on the next `make all`. Two
+machines write to the same Snowflake: the GitHub runner lands and loads in its own workspace and commits nothing but the
+generator's run files; the Mac owns `data/landing/` and the spend log (`make sf-sync`); and `LANDING.MANIFEST_SNAPSHOT` is
+written as a union across writers, pruned only by the Mac, so neither side's lagging `manifest.json` hides the other's files
+from silver.
 
 What the first two campaign slots taught about the API, each now handled in `tools/campaign.py`:
 

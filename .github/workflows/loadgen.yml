@@ -7,7 +7,10 @@
 # Kill switch: repository variable LOADGEN != "on" skips every run (no request, no cost), and
 # `python tools/runpod_endpoint.py off $LOADGEN_ENDPOINT` sets the endpoint's max workers to 0 so nothing can start.
 # Secrets: RUNPOD_API_KEY_RW (write permission: it submits jobs), LOADGEN_ENDPOINT (the endpoint id).
-# Endpoint contract (what the cost estimate assumes): RTX 4090 PRO, min 0 / max 1 workers, idle timeout 10 s, FlashBoot on.
+# Endpoint contract (what the cost estimate assumes): RTX 4090, min 0 / max 1 workers, idle timeout 10 s, FlashBoot on,
+# minCudaVersion 12.8 — `make loadgen-setup` puts an existing endpoint into that shape. It is one of Runpod's own GitHub
+# builds of the baked Qwen3 image (jw5new6lqznp0u), not a new endpoint: registry.runpod.net images can only be pulled by the
+# endpoints Runpod built for them.
 name: loadgen
 on:
   schedule:

@@ -41,8 +41,10 @@
 #   make campaign-slot [N_COLD=1]  one cold start per cell: images concurrently, GPU×FlashBoot cells sequentially per endpoint
 #                                  (PATCH pool + FlashBoot, max 1, run, max 0), then land --only runpod + spend check
 #   make campaign-status / campaign-park / campaign-unpark / campaign-restore   progress; max 0 / 1; original config back + delete lh-camp-*
-#   make loadgen-create            the load generator's endpoint (4090 PRO, FlashBoot on, baked image, idle 10 s, max 1)
+#   make loadgen-setup             re-shape LOADGEN_ENDPOINT (a build of the baked image) for the generator: 4090, FlashBoot on, idle 10 s, max 1
 #   make loadgen-off / loadgen-on  kill switch: workers.max 0 / 1 (LOADGEN_ENDPOINT in snowflake/.env)
+#   make land-runpod               land the runpod root only (generator + campaign runs)
+#   make sf-sync                   the routine once the GitHub schedules run: git pull, land-runpod, bronze (--prune), dbt, poll, load, spend
 #
 # Overrides:  EMBERSERVE_DIR, PULSE_DIR (source roots), FORMAT=delta|parquet, RUN_LABEL
 
@@ -69,7 +71,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-create loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-setup land-runpod sf-sync loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -220,6 +222,16 @@ sf-setup: python-check $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.setup 2>&1 | tee $(SF_LOGS)/sf-setup.log; exit $${PIPESTATUS[0]}
 	cd snowflake/dbt && ../../$(SF_DBT) debug --no-use-colors 2>&1 | tee ../../$(SF_LOGS)/dbt-debug.log; exit $${PIPESTATUS[0]}
 
+# Land the runpod root only (load-generator and campaign runs; no emberserve / Pulse checkout needed).
+land-runpod: $(SF_VENV)/.installed
+	$(SF_PYTHON) -m lakehouse.land --only runpod
+
+# The Mac's routine once the GitHub schedules are live: pull what the load generator committed, land it, load it, rebuild,
+# refresh the spend log, and prune the shared manifest snapshot to this (complete) landing.
+sf-sync:
+	git pull --rebase -q
+	$(MAKE) land-runpod && $(MAKE) sf-bronze SF_BRONZE_FLAGS=--prune && $(MAKE) sf-silver-gold sf-runpod-poll sf-runpod-load sf-spend
+
 sf-bronze: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.bronze --run-label "$(RUN_LABEL)" $(SF_BRONZE_FLAGS) 2>&1 | tee $(SF_LOGS)/sf-bronze.log; exit $${PIPESTATUS[0]}
 
@@ -273,10 +285,11 @@ campaign-status:
 campaign-restore:
 	$(SF_PYTHON) tools/campaign.py restore 2>&1 | tee -a $(SF_LOGS)/campaign.log; exit $${PIPESTATUS[0]}
 
-LOADGEN_IMAGE_REF ?= registry.runpod.net/ashwinsreedhar28-emberserve-main-deploy-runpod-dockerfile-qwen3:038a1a253
-loadgen-create: $(SF_VENV)/.installed
-	$(SF_PYTHON) tools/runpod_endpoint.py create --name loadgen-4090-fbon-baked --image "$(LOADGEN_IMAGE_REF)" \
-	  --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT --idle 10 --max 1 --disk 5 --env MAX_CONCURRENCY=64 --env LAKEHOUSE_CELL=loadgen $(if $(DRY),--dry-run,)
+# The load generator reuses one of Runpod's own builds of the baked Qwen3 image (a new endpoint cannot pull it: registry auth);
+# LOADGEN_ENDPOINT in snowflake/.env names it. `loadgen-setup` puts it into the shape the cost estimate assumes.
+loadgen-setup: $(SF_VENV)/.installed
+	$(SF_PYTHON) tools/runpod_endpoint.py configure "$(LOADGEN_ENDPOINT)" --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT \
+	  --idle 10 --max 1 --min-cuda 12.8 --env LAKEHOUSE_CELL=loadgen $(if $(DRY),--dry-run,)
 
 loadgen-off:
 	$(SF_PYTHON) tools/runpod_endpoint.py off "$(LOADGEN_ENDPOINT)"

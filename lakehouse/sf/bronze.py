@@ -133,16 +133,28 @@ def ingested_keys(cur, table: str) -> set[tuple[str, str]]:
     return keys
 
 
-def write_manifest_snapshot(cur, landing: Path, manifest: dict) -> None:
-    """LANDING.MANIFEST_SNAPSHOT: the current (file, sha) pairs and, per file, every bronze table it must be complete in."""
-    run(cur, "CREATE OR REPLACE TABLE LANDING.MANIFEST_SNAPSHOT (source_file STRING, source_sha256 STRING, dataset STRING, "
+def write_manifest_snapshot(cur, landing: Path, manifest: dict, prune: bool = False) -> None:
+    """LANDING.MANIFEST_SNAPSHOT: the current (file, sha) pairs and, per file, every bronze table it must be complete in.
+
+    Two writers share this table — the Mac (campaign runs land there first) and the GitHub runner (load-generator runs land
+    there first) — and each one's manifest.json lags the other's until the next push. So the write is a *union*: every path
+    in the incoming manifest replaces its own earlier row(s) (a re-landed file with a new sha supersedes the old sha), and
+    paths the incoming manifest does not know stay as they are. Only `--prune` (run from the checkout that holds the whole
+    landing) drops paths that are no longer in the manifest, which is what `CREATE OR REPLACE` used to do on every run."""
+    run(cur, "CREATE TABLE IF NOT EXISTS LANDING.MANIFEST_SNAPSHOT (source_file STRING, source_sha256 STRING, dataset STRING, "
              "expected_table STRING, expected_rows NUMBER, landed_at_utc TIMESTAMP_NTZ, snapshot_written_at TIMESTAMP_NTZ)")
+    run(cur, "CREATE OR REPLACE TEMPORARY TABLE LANDING.MANIFEST_INCOMING (source_file STRING, source_sha256 STRING, dataset STRING, "
+             "expected_table STRING, expected_rows NUMBER, landed_at_utc TIMESTAMP_NTZ)")
     landed_at = manifest.get("landed_at_utc", "").replace("+00:00", "")
     rows = []
     for e in manifest["files"]:
         for t, n in expected_rows(landing / e["landed_relpath"], e["dataset"]).items():
             rows.append((e["landed_relpath"], e["sha256_landed"], e["dataset"], t, n, landed_at))
-    cur.executemany("INSERT INTO LANDING.MANIFEST_SNAPSHOT VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP())", rows)
+    cur.executemany("INSERT INTO LANDING.MANIFEST_INCOMING VALUES (%s, %s, %s, %s, %s, %s)", rows)
+    if prune:
+        run(cur, "DELETE FROM LANDING.MANIFEST_SNAPSHOT WHERE source_file NOT IN (SELECT source_file FROM LANDING.MANIFEST_INCOMING)")
+    run(cur, "DELETE FROM LANDING.MANIFEST_SNAPSHOT WHERE source_file IN (SELECT source_file FROM LANDING.MANIFEST_INCOMING)")
+    run(cur, "INSERT INTO LANDING.MANIFEST_SNAPSHOT SELECT *, CURRENT_TIMESTAMP() FROM LANDING.MANIFEST_INCOMING")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -305,6 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run-label", required=True, help="batch tag written to every row, e.g. 2026-10-08_initial")
     ap.add_argument("--force", action="store_true", help="append even if the file's (path, sha256) is already in the table; COPY … FORCE=TRUE")
     ap.add_argument("--landing-dir", type=Path, default=LANDING_DIR)
+    ap.add_argument("--prune", action="store_true", help="drop MANIFEST_SNAPSHOT paths that this manifest no longer lists (only from the checkout holding the whole landing)")
     args = ap.parse_args(argv)
 
     landing: Path = args.landing_dir
@@ -316,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     cur = conn.cursor()
     try:
         ensure_tables(cur)
-        write_manifest_snapshot(cur, landing, manifest)
+        write_manifest_snapshot(cur, landing, manifest, prune=args.prune)
         known = {t: ingested_keys(cur, t) for t in TABLE_DDL}
 
         print(f"bronze(snowflake) run_label={args.run_label} ingested_at={ingested_at.isoformat()}Z files={len(manifest['files'])}")

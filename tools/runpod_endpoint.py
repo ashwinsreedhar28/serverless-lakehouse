@@ -5,6 +5,8 @@ measurement campaign and the load generator need, with every cost-relevant setti
     python tools/runpod_endpoint.py catalog [--gpu "RTX 4090"]        pool ids and type ids, with $/hr and availability
     python tools/runpod_endpoint.py create --name … --image … --gpu "NVIDIA GeForce RTX 4090" --flashboot OFF \
             [--idle 10] [--max 1] [--disk 40] [--env K=V …] [--timeout-ms 600000]      → prints the endpoint id
+    python tools/runpod_endpoint.py configure <id> --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT --idle 10 --max 1 \
+            --min-cuda 12.8 [--env K=V …]              re-shape an existing endpoint (the registry-auth workaround: reuse a build)
     python tools/runpod_endpoint.py off <id>        workers.max = 0 (kill switch: nothing can start, nothing is billed)
     python tools/runpod_endpoint.py on <id> [--max 1]
     python tools/runpod_endpoint.py delete <id>     the end-of-stage rule: every campaign endpoint is deleted, not paused
@@ -97,6 +99,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--env", action="append", default=[], help="K=V, repeatable")
     p.add_argument("--data-center", action="append", default=[], help="restrict placement, repeatable")
     p.add_argument("--dry-run", action="store_true")
+    p = sub.add_parser("configure")
+    p.add_argument("id")
+    p.add_argument("--gpu", required=True)
+    p.add_argument("--flashboot", required=True, choices=["OFF", "FLASHBOOT", "PRIORITY_FLASHBOOT"])
+    p.add_argument("--idle", type=int, default=10)
+    p.add_argument("--max", type=int, default=1)
+    p.add_argument("--min-cuda", default=None, help='placement floor, e.g. "12.8" — what the image needs, not what the endpoint was created with')
+    p.add_argument("--env", action="append", default=[], help="K=V, repeatable (merged into the endpoint's env)")
+    p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("off"); p.add_argument("id")
     p = sub.add_parser("on"); p.add_argument("id"); p.add_argument("--max", type=int, default=1)
     p = sub.add_parser("delete"); p.add_argument("id")
@@ -137,6 +148,28 @@ def main(argv: list[str] | None = None) -> int:
         ep = call("POST", "/v2/serverless", body)
         print(ep.get("id"))
         print(f"created {ep.get('id')} {ep.get('name')}", file=sys.stderr)
+        return 0
+    if a.cmd == "configure":
+        pool, exclude, g = resolve_gpu(a.gpu)
+        cur = call("GET", f"/v2/serverless/{a.id}")
+        gpu = {"pools": [pool], "excludedTypes": exclude, "count": (cur.get("gpu") or {}).get("count") or 1}
+        floor = a.min_cuda or (cur.get("gpu") or {}).get("minCudaVersion")
+        if floor:
+            gpu["allowedCudaVersions"], gpu["minCudaVersion"] = [], floor     # PATCH merges: empty the list, keep one key
+        env = dict(cur.get("env") or {})
+        env["LAKEHOUSE"] = "1"
+        for kv in a.env:
+            k, _, v = kv.partition("=")
+            env[k] = v
+        body = {"gpu": gpu, "flashboot": a.flashboot, "workers": {"min": 0, "max": a.max, "idleTimeout": a.idle}, "env": env}
+        print(json.dumps(body, indent=1), file=sys.stderr)
+        print(f"  {cur.get('name')} ({a.id}): {g['name']} in pool {pool} (${g['price_hr']}/hr), image {cur.get('image')}", file=sys.stderr)
+        if a.dry_run:
+            return 0
+        ep = call("PATCH", f"/v2/serverless/{a.id}", body)
+        w = ep.get("workers") or {}
+        print(f"{a.id}: pools={(ep.get('gpu') or {}).get('pools')} minCuda={(ep.get('gpu') or {}).get('minCudaVersion')} "
+              f"flashboot={ep.get('flashboot')} max={w.get('max')} idle={w.get('idleTimeout')}")
         return 0
     if a.cmd == "off":
         ep = call("PATCH", f"/v2/serverless/{a.id}", {"workers": {"min": 0, "max": 0}})
