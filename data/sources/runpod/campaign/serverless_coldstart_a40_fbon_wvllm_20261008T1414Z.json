@@ -1,0 +1,72 @@
+{
+ "kind": "serverless_coldstart",
+ "mode": "queue",
+ "endpoint": "rvy2p7bfia91fm",
+ "label": "a40_fbon_wvllm",
+ "image": "registry.runpod.net/runpod-workers-worker-vllm-main-dockerfile:26f892c0a",
+ "note": "campaign slot 20261008T1414Z; NVIDIA A40; flashboot FLASHBOOT",
+ "max_tokens": 16,
+ "idle_s": 0.0,
+ "runs": [
+  {
+   "health_before": {
+    "jobs": {
+     "completed": 39,
+     "failed": 0,
+     "inProgress": 0,
+     "inQueue": 0,
+     "retried": 0
+    },
+    "workers": {
+     "idle": 1,
+     "initializing": 0,
+     "ready": 1,
+     "running": 0,
+     "throttled": 0,
+     "unhealthy": 0
+    }
+   },
+   "cold": {
+    "status": 200,
+    "total_s": 177.23379054106772,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 174825,
+    "execution_ms": 1029,
+    "worker_id": "mzbx31gbzbb5t0",
+    "submit_wall": 1791470529.595577,
+    "cold": true
+   },
+   "warm": {
+    "status": 200,
+    "total_s": 1.2740412089042366,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 55,
+    "execution_ms": 915,
+    "worker_id": "mzbx31gbzbb5t0",
+    "submit_wall": 1791470706.828265,
+    "cold": false
+   }
+  }
+ ],
+ "summary": {
+  "cold_s": {
+   "n": 1,
+   "min": 177.23379054106772,
+   "median": 177.23379054106772,
+   "max": 177.23379054106772
+  },
+  "cold_delay_ms": {
+   "median": 174825,
+   "values": [
+    174825
+   ]
+  },
+  "warm_total_s": {
+   "median": 1.2740412089042366
+  },
+  "failures": 0,
+  "not_cold": 0
+ }
+}
