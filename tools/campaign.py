@@ -219,8 +219,11 @@ def run_cell(c: dict, ep: dict, n_cold: int, key: str, stamp: str, idle_s: int) 
            "--out", str(out)]
     if c["image"].get("timeline"):
         cmd.append("--timeline")
-    r = subprocess.run(cmd, capture_output=True, text=True)
-    rp.call("PATCH", f"/v2/serverless/{endpoint_id}", {"workers": {"min": 0, "max": 0, "idleTimeout": idle_s}})
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+    finally:
+        # max 0 no matter how the run ended; rp.call rides out a network blink on its own
+        rp.call("PATCH", f"/v2/serverless/{endpoint_id}", {"workers": {"min": 0, "max": 0, "idleTimeout": idle_s}})
     tail = (r.stderr or "").strip().splitlines()[-1:] or [""]
     return cell, r.returncode, tail[0]
 

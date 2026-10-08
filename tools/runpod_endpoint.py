@@ -40,17 +40,28 @@ def key() -> str:
 JOBS = "https://api.runpod.ai"
 
 
-def call(method: str, path: str, body: dict | None = None, base: str = REST) -> dict | list:
+def call(method: str, path: str, body: dict | None = None, base: str = REST, retries: int = 8) -> dict | list:
+    """One REST call. An HTTP error is final (the API said no). A network error — DNS, connection refused, timeout: the
+    laptop's Wi-Fi blinked, which killed a campaign slot once mid-PATCH — is retried for a few minutes; these calls are
+    idempotent (PATCH to a target state, GET, DELETE, purge), so repeating one cannot do harm."""
+    import time
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, data=data, method=method,
                                  headers={"Authorization": f"Bearer {key()}", "Content-Type": "application/json",
                                           "Accept": "application/json", "User-Agent": "serverless-lakehouse/runpod_endpoint"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            txt = r.read().decode()
-            return json.loads(txt) if txt.strip() else {}
-    except urllib.error.HTTPError as e:
-        sys.exit(f"{method} {path} → {e.code}: {e.read().decode(errors='replace')[:500]}")
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                txt = r.read().decode()
+                return json.loads(txt) if txt.strip() else {}
+        except urllib.error.HTTPError as e:
+            sys.exit(f"{method} {path} → {e.code}: {e.read().decode(errors='replace')[:500]}")
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt >= retries:
+                raise
+            wait = min(15 * (attempt + 1), 60)
+            print(f"  {method} {path}: network error ({str(e)[:80]}); retry {attempt + 1}/{retries} in {wait}s", file=sys.stderr, flush=True)
+            time.sleep(wait)
 
 
 def catalog(filter_text: str | None = None) -> list[dict]:
