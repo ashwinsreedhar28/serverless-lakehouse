@@ -144,10 +144,23 @@ def cold_starts_done(cell: str) -> int:
     return n
 
 
+def gpu_body(endpoint_id: str, pools: list[str], exclude: list[str]) -> dict:
+    """The endpoint's CUDA constraint carried over explicitly: the API rejects a PATCH to `gpu` when the stored object has both
+    allowedCudaVersions and minCudaVersion (console-made endpoints can), so send one and null the other."""
+    cur = (rp.call("GET", f"/v2/serverless/{endpoint_id}").get("gpu") or {})
+    allowed = cur.get("allowedCudaVersions") or []
+    body = {"pools": pools, "excludedTypes": exclude, "count": cur.get("count") or 1}
+    if allowed:
+        body["allowedCudaVersions"], body["minCudaVersion"] = allowed, None
+    else:
+        body["allowedCudaVersions"], body["minCudaVersion"] = [], cur.get("minCudaVersion")
+    return body
+
+
 def set_cell(endpoint_id: str, c: dict, max_workers: int, idle_s: int) -> None:
     pool, exclude, _ = rp.resolve_gpu(c["gpu"]["type"])
     rp.call("PATCH", f"/v2/serverless/{endpoint_id}", {
-        "gpu": {"pools": [pool], "excludedTypes": exclude},
+        "gpu": gpu_body(endpoint_id, [pool], exclude),
         "flashboot": c["flashboot"],
         "workers": {"min": 0, "max": max_workers, "idleTimeout": idle_s},
     })
@@ -248,7 +261,7 @@ def cmd_restore(a) -> int:
         if "original" not in ep:
             continue
         o = ep["original"]
-        body = {"gpu": {"pools": o["gpu"]["pools"], "excludedTypes": o["gpu"]["excludedTypes"]}, "flashboot": o["flashboot"],
+        body = {"gpu": gpu_body(ep["endpoint_id"], o["gpu"]["pools"], o["gpu"]["excludedTypes"]), "flashboot": o["flashboot"],
                 "workers": {"min": 0, "max": 0, "idleTimeout": (o.get("workers") or {}).get("idleTimeout", 5)}}
         rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", body)
         print(f"  {slug}: {ep['endpoint_id']} restored pools={o['gpu']['pools']} flashboot={o['flashboot']} max=0")
