@@ -293,7 +293,13 @@ def cmd_park(a, max_workers: int = 0) -> int:
         if "original" not in ep:
             continue
         rp.call("PATCH", f"/v2/serverless/{ep['endpoint_id']}", {"workers": {"min": 0, "max": max_workers}})
-        print(f"  {slug}: {ep['endpoint_id']} workers.max = {max_workers}")
+        purged = ""
+        if max_workers == 0:
+            # A slot killed mid-cell leaves its job in the queue; with max 0 it waits there and would run first — and skew the
+            # next cold start's delayTime — the moment a later slot sets max 1. Drop it now.
+            out = rp.call("POST", f"/v2/{ep['endpoint_id']}/purge-queue", {}, base=rp.JOBS)
+            purged = f", purged {out.get('removed', 0)} queued job(s)" if isinstance(out, dict) else ""
+        print(f"  {slug}: {ep['endpoint_id']} workers.max = {max_workers}{purged}")
     return 0
 
 
