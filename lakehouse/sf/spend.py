@@ -59,6 +59,13 @@ def main(argv: list[str] | None = None) -> int:
     for ep, day, total, gpu, n in daily:
         actual_by_ep[ep] += float(total or 0)
 
+    # campaign/spend_ack.csv: overruns the owner has reviewed (date_utc, endpoint_id, usd, reason). They stay in the actuals
+    # and in this log; they come off the 20 % check so a known, fixed incident does not block every later slot.
+    acks = read_csv(CAMPAIGN_DIR / "spend_ack.csv")
+    ack_by_ep: dict[str, float] = defaultdict(float)
+    for r in acks:
+        if r.get("endpoint_id"):
+            ack_by_ep[r["endpoint_id"]] += float(r.get("usd") or 0)
     runs = read_csv(CAMPAIGN_DIR / "runs.csv")
     estimates = read_csv(CAMPAIGN_DIR / "estimate.csv")
     est_by_ep: dict[str, float] = defaultdict(float)
@@ -74,22 +81,25 @@ def main(argv: list[str] | None = None) -> int:
              f"Actual $ from Runpod's `GET /v2/billing/serverless` (hourly buckets, via the poller; polls {first_poll} → {last_poll} UTC). "
              f"Estimates from `campaign/runs.csv` and {LOADGEN_EST_USD_PER_RUN:.3f} $/run for the load generator. "
              f"Rule: stop when an endpoint's actual exceeds its estimate by {OVERRUN:.0%}. Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}.",
-             "", "## Per endpoint", "", "| endpoint | name | estimated $ | actual $ | ratio | status |", "|---|---|---|---|---|---|"]
+             "", "## Per endpoint", "", "| endpoint | name | estimated $ | actual $ | acknowledged $ | ratio (actual − ack) / est | status |", "|---|---|---|---|---|---|---|"]
     overruns = []
     for ep in sorted(set(actual_by_ep) | set(est_by_ep)):
-        est, act = est_by_ep.get(ep, 0.0), actual_by_ep.get(ep, 0.0)
-        ratio = (act / est) if est else None
+        est, act, ack = est_by_ep.get(ep, 0.0), actual_by_ep.get(ep, 0.0), ack_by_ep.get(ep, 0.0)
+        ratio = ((act - ack) / est) if est else None
         status = "—"
         if est:
-            status = "OVER 20 %" if act > est * (1 + OVERRUN) else "ok"
+            status = "OVER 20 %" if (act - ack) > est * (1 + OVERRUN) else "ok"
             if status.startswith("OVER"):
-                overruns.append((ep, est, act))
-        lines.append(f"| {ep} | {names.get(ep, '')} | {est:.4f} | {act:.4f} | {f'{ratio:.2f}' if ratio is not None else '—'} | {status} |")
+                overruns.append((ep, est, act - ack))
+        lines.append(f"| {ep} | {names.get(ep, '')} | {est:.4f} | {act:.4f} | {ack:.4f} | {f'{ratio:.2f}' if ratio is not None else '—'} | {status} |")
     lines += ["", f"**Total actual: ${sum(actual_by_ep.values()):.4f}** · total estimated: ${sum(est_by_ep.values()):.4f}", "",
               "## Per endpoint per day (actual)", "", "| day (UTC) | endpoint | name | total $ | gpu $ | billed hours |", "|---|---|---|---|---|---|"]
     lines += [f"| {day} | {ep} | {names.get(ep, '')} | {float(total or 0):.4f} | {float(gpu or 0):.4f} | {n} |" for ep, day, total, gpu, n in daily]
     lines += ["", "## What ran (campaign/runs.csv)", "", "| date (UTC) | cell | endpoint | n_cold | est $ | note |", "|---|---|---|---|---|---|"]
     lines += [f"| {r.get('date_utc','')} | {r.get('cell','')} | {r.get('endpoint_id','')} | {r.get('n_cold','')} | {r.get('est_usd','')} | {r.get('note','')} |" for r in runs]
+    if acks:
+        lines += ["", "## Acknowledged overruns (campaign/spend_ack.csv)", "", "| date (UTC) | endpoint | $ | reason |", "|---|---|---|---|"]
+        lines += [f"| {r.get('date_utc','')} | {r.get('endpoint_id','')} | {r.get('usd','')} | {r.get('reason','')} |" for r in acks]
     if estimates:
         lines += ["", "## Approved estimate (campaign/estimate.csv)", "", "| cell | est $ (total) |", "|---|---|"]
         lines += [f"| {e.get('cell','')} | {e.get('est_usd_total','')} |" for e in estimates]
@@ -97,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     args.out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"spend: actual ${sum(actual_by_ep.values()):.4f} across {len(actual_by_ep)} endpoint(s); estimated ${sum(est_by_ep.values()):.4f} → {args.out.relative_to(REPO_ROOT)}")
     for ep, est, act in overruns:
-        print(f"  OVERRUN {ep}: actual ${act:.4f} > estimate ${est:.4f} × 1.2 — stop and review", file=sys.stderr)
+        print(f"  OVERRUN {ep}: actual (less acknowledged) ${act:.4f} > estimate ${est:.4f} × 1.2 — stop and review", file=sys.stderr)
     return 1 if (args.check and overruns) else 0
 
 

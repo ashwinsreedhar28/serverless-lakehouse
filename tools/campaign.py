@@ -34,6 +34,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -224,11 +225,27 @@ def run_cell(c: dict, ep: dict, n_cold: int, key: str, stamp: str, idle_s: int) 
     return cell, r.returncode, tail[0]
 
 
+RUNS_LOCK = threading.Lock()
+
+
+def record_run(stamp: str, c: dict, n_cold: int, rc: int, tail: str) -> None:
+    """Append the cell's estimate row the moment it finishes — a slot killed mid-way used to leave its finished cells billed
+    but unestimated, and the spend check then read that as an overrun."""
+    with RUNS_LOCK:
+        new = not RUNS.is_file()
+        with RUNS.open("a", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(["date_utc", "cell", "endpoint_id", "n_cold", "est_usd", "note"])
+            w.writerow([stamp, c["cell"], c["image"]["reference_endpoint"], n_cold, round(c["usd_per_cold"] * n_cold, 4), f"rc={rc} {tail[:120]}"])
+
+
 def run_image(img_slug: str, todo: list[dict], ep: dict, n_cold: int, key: str, stamp: str, idle_s: int) -> list[tuple[str, int, str]]:
     results = []
     for c in todo:
         print(f"  [{img_slug}] {c['cell']} …", flush=True)
         results.append(run_cell(c, ep, n_cold, key, stamp, idle_s))
+        record_run(stamp, c, n_cold, *results[-1][1:])
         print(f"  [{img_slug}] {results[-1][0]:<28} rc={results[-1][1]}  {results[-1][2][:100]}", flush=True)
     return results
 
@@ -265,15 +282,6 @@ def cmd_slot(a) -> int:
             results = [r for f in futs for r in f.result()]
     finally:
         LOCK.unlink(missing_ok=True)
-    cell_by_name = {c["cell"]: c for v in by_image.values() for c in v}
-    new = not RUNS.is_file()
-    with RUNS.open("a", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(["date_utc", "cell", "endpoint_id", "n_cold", "est_usd", "note"])
-        for cell, rc, tail in results:
-            c = cell_by_name[cell]
-            w.writerow([stamp, cell, c["image"]["reference_endpoint"], a.n_cold, round(c["usd_per_cold"] * a.n_cold, 4), f"rc={rc} {tail[:120]}"])
     subprocess.run([sys.executable, "-m", "lakehouse.land", "--only", "runpod"], cwd=REPO, check=False)
     return 0 if all(rc == 0 for _, rc, _ in results) else 1
 

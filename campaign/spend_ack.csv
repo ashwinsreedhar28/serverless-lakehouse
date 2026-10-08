@@ -1,0 +1,2 @@
+date_utc,endpoint_id,usd,reason
+2026-10-08,h90byyjfb0ofbu,0.70,"crash loop 03:11-04:01 UTC: the baked image (needs CUDA >= 12.8) was placed on a 4090 host with an older driver; the container failed to start every ~20 s for 50 min and the worker was billed the whole time. Fixed by setting minCudaVersion per image (campaign/grid.json min_cuda_version); reviewed by the owner 2026-10-08."
