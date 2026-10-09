@@ -384,6 +384,17 @@ What the first two campaign slots taught about the API, each now handled in `too
   miss apart from placement failures (`n_client_errors`).
 - A slot killed mid-way leaves a job in the queue; with `max 0` it waits there and would run first — and skew the next
   cold start — the moment a later slot sets `max 1`. `campaign-park` purges every queue.
+- `/runsync` is the wrong call for a job that may wait 20 minutes for a GPU: its 90 s cap hands back a `sync-…` id that
+  `/status` won't follow, and Runpod closes the long-poll outright on some ("Server disconnected"). Six cells were lost that
+  way on day one; the vendored cold-start script now submits with `/run` and follows `/status/<id>`.
+- GitHub throttles a low-activity repo's scheduled workflows: the "hourly" generator and the "30-minute" poller each ran
+  about every 6 hours. They stay as the idempotent backstop; while the Mac is up for the campaign, `make loadgen-run` and
+  a poll run hourly from launchd (`campaign/launchd.loadgen.plist.example`) and `make sf-sync` lands all of it.
+- What the first 116 cold starts say: baking the weights into the image makes the engine boot in 6–9 s but the 27 GB image
+  is rarely cached where the scheduler lands, so FlashBoot-off baked cells spend 7–8 minutes pulling it while the 6 GB slim
+  image is fetched or already there — end to end, *fetched* beats *baked* on every GPU with FlashBoot off. FlashBoot's effect
+  at a 6-hour cadence is placement (image-warm host, 2–5 s) rather than a sub-5 s resume (none in 116), which the
+  threshold "hit rate" cannot see — the medians can. The A100 pool (`AMPERE_80`) waits longest for every image.
 
 ## Audit
 
