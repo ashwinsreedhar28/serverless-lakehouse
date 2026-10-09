@@ -87,6 +87,8 @@ td .bar { display: inline-block; height: 8px; background: var(--s1); border-radi
 .two { display: grid; grid-template-columns: 1fr; gap: 1rem; }
 @media (min-width: 900px) { .two { grid-template-columns: 1fr 1fr; } }
 .note { font-size: 0.82rem; color: var(--muted); margin: 0.6rem 0 0; }
+.toggle { display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.85rem; color: var(--muted); margin: 0.9rem 0 0.25rem; cursor: pointer; }
+.toggle input { accent-color: var(--accent); margin: 0; }
 #tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.8rem; line-height: 1.35; padding: 0.45rem 0.6rem; border-radius: 6px; max-width: 320px; z-index: 10; opacity: 0; transition: opacity 0.1s; font-variant-numeric: tabular-nums; }
 #tip b { font-weight: 600; }
 footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width: 80ch; }
@@ -222,6 +224,7 @@ footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.85rem; max-width:
   <header><div><h2>The Runpod account, as the API saw it</h2>
   <p class="q">One row per endpoint per UTC day from the poller's snapshots: configuration at the last poll, workers seen and the most active at once, worker appearances (≈ scale-ups, derived by diffing consecutive polls), the endpoint's own job counters moved, and what Runpod billed for the day.</p></div>
   <span class="src">gold_runpod_endpoint_daily</span></header>
+  <label class="toggle"><input type="checkbox" id="runpod-idle"> <span id="runpod-idle-label">show idle endpoint-days</span></label>
   <div class="tblwrap" id="tb-runpod"></div>
 </section>
 
@@ -689,7 +692,14 @@ const GOLD = /*GOLD_JSON*/null;
     ], [...CF].sort((a, b) => (a.campaign_kind > b.campaign_kind ? 1 : a.campaign_kind < b.campaign_kind ? -1 : 0) || cellSort(a, b) || GAP_ORDER.indexOf(a.gap_bucket) - GAP_ORDER.indexOf(b.gap_bucket)));
   }
   if (RD.length) {
-    const rows = [...RD].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0) || (a.name || "").localeCompare(b.name || ""));
+    // an endpoint-day is "active" when the polls saw a worker, a job counter moved, or Runpod billed it; the rest are the
+    // account's parked endpoints at max 0, which the poller records on purpose but nobody needs to scroll past
+    const active = (r) => (r.n_workers_seen || 0) > 0 || (r.jobs_completed_delta || 0) > 0 || (r.total_usd || 0) > 0;
+    const all = [...RD].sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0) || (a.name || "").localeCompare(b.name || ""));
+    const nIdle = all.filter((r) => !active(r)).length;
+    $("runpod-idle-label").textContent = `show the ${nIdle} idle endpoint-day${nIdle === 1 ? "" : "s"} (parked at max 0, nothing ran)`;
+    const draw = () => {
+    const rows = $("runpod-idle").checked ? all : all.filter(active);
     const maxUsd = Math.max(...rows.map((r) => r.total_usd || 0), 0.01);
     table($("tb-runpod"), [
       { h: "day (UTC)", k: "day" }, { h: "endpoint", f: (r) => `${esc(r.name || "")} <span class="muted">${esc(r.endpoint_id)}</span>` }, { h: "flashboot", k: "flashboot" },
@@ -698,6 +708,9 @@ const GOLD = /*GOLD_JSON*/null;
       { h: "appeared", k: "n_worker_appearances", num: true }, { h: "jobs done Δ", num: true, f: (r) => r.jobs_completed_delta == null ? "–" : fmt.int(r.jobs_completed_delta) },
       { h: "billed", num: true, f: (r) => r.total_usd == null ? "–" : `<span class="bar" style="width:${Math.round(r.total_usd / maxUsd * 60)}px"></span>${fmt.usd(r.total_usd)}` },
     ], rows);
+    };
+    draw();
+    $("runpod-idle").addEventListener("change", draw);
     $("c-runpod").hidden = false;
   }
 })();
