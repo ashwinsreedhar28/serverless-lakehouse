@@ -9,7 +9,7 @@
 <dict>
   <key>Label</key><string>com.lakehouse.campaign</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>-lc</string><string>cd __REPO__ && make campaign-slot >> snowflake/logs/campaign-launchd.log 2>&1</string></array>
+  <array><string>/bin/bash</string><string>-lc</string><string>cd __REPO__ &amp;&amp; make campaign-slot >> snowflake/logs/campaign-launchd.log 2>&amp;1</string></array>
   <key>StartCalendarInterval</key>
   <array>
     <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>10</integer></dict>

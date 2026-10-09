@@ -42,6 +42,7 @@
 #                                  (PATCH pool + FlashBoot, max 1, run, max 0), then land --only runpod + spend check
 #   make campaign-status / campaign-park / campaign-unpark / campaign-restore   progress; max 0 / 1; original config back + delete lh-camp-*
 #   make loadgen-setup             re-shape LOADGEN_ENDPOINT (a build of the baked image) for the generator: 4090, FlashBoot on, idle 10 s, max 1
+#   make loadgen-run               one generator run from this machine (hourly via campaign/launchd.loadgen.plist.example)
 #   make loadgen-off / loadgen-on  kill switch: workers.max 0 / 1 (LOADGEN_ENDPOINT in snowflake/.env)
 #   make land-runpod               land the runpod root only (generator + campaign runs)
 #   make sf-sync                   the routine once the GitHub schedules run: git pull, land-runpod, bronze (--prune), dbt, poll, load, spend
@@ -72,7 +73,7 @@ endif
 # whitespace before an inline # as part of the value.)
 export SPARK_LOCAL_IP ?= 127.0.0.1
 
-.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-setup land-runpod sf-sync loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dashboard sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
+.PHONY: campaign-park campaign-unpark campaign-restore sf-spend campaign-plan campaign-prepare campaign-slot campaign-status loadgen-setup loadgen-run land-runpod sf-sync loadgen-off loadgen-on sf-runpod-poll sf-runpod-load sf-setup sf-bronze sf-verify sf-silver-gold sf-parity sf-all sf-show sf-dashboard sf-dbt-test sf-clean setup land bronze verify silver gold report dashboard space space-login space-create space-push space-create-docker space-push-docker dataset-create dataset-push all show check-secrets hooks test test-fast clean java-check python-check
 
 setup: python-check $(VENV)/.installed java-check
 
@@ -296,6 +297,18 @@ campaign-restore:
 loadgen-setup: $(SF_VENV)/.installed
 	$(SF_PYTHON) tools/runpod_endpoint.py configure "$(LOADGEN_ENDPOINT)" --gpu "NVIDIA GeForce RTX 4090" --flashboot FLASHBOOT \
 	  --idle 10 --max 1 --min-cuda 12.8 $(if $(DRY),--dry-run,)
+
+# One generator run from this machine — the same request the GitHub workflow makes, same file, same folder; `sf-sync`
+# lands it. GitHub throttles a low-activity repo's schedules to every few hours, so `campaign/launchd.loadgen.plist.example`
+# runs this hourly (+ a poll) while the Mac is up; the GitHub runs are the slow backstop and both are idempotent.
+LOADGEN_LABEL ?= loadgen_4090_flashboot_on_baked
+LOADGEN_IMAGE ?= emberserve Qwen2.5-0.5B-Instruct, weights baked in (loadgen)
+loadgen-run: $(SF_VENV)/.httpx $(SF_LOGS)
+	@[ -n "$(LOADGEN_ENDPOINT)" ] || { echo "LOADGEN_ENDPOINT is not set (snowflake/.env)"; exit 1; }
+	@mkdir -p data/sources/runpod/loadgen
+	stamp=$$(date -u +%Y%m%dT%H%MZ); $(SF_PYTHON) tools/serverless_coldstart.py --mode queue --endpoint "$(LOADGEN_ENDPOINT)" --api-key "$(RUNPOD_API_KEY_RW)" \
+	  --repeats 1 --idle-s 0 --zero-wait-s 120 --max-tokens 16 --timeout-s 600 --label "$(LOADGEN_LABEL)" --image "$(LOADGEN_IMAGE)" \
+	  --note "loadgen hourly $$stamp (mac)" --out "data/sources/runpod/loadgen/serverless_coldstart_$(LOADGEN_LABEL)_$$stamp.json" 2>&1 | tee -a $(SF_LOGS)/loadgen.log; exit $${PIPESTATUS[0]}
 
 loadgen-off:
 	$(SF_PYTHON) tools/runpod_endpoint.py off "$(LOADGEN_ENDPOINT)"

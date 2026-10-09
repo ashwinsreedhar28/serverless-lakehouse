@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hourly load-generator run + a Runpod poll from this Mac, at :23 like the GitHub workflow (which GitHub throttles to every
+     few hours on a low-activity repo; both are idempotent, so running both is fine). The generator's file lands with the next
+     `make sf-sync`; the poll goes straight to @RUNPOD.
+     Install: sed "s|__REPO__|$HOME/serverless-lakehouse|" campaign/launchd.loadgen.plist.example > ~/Library/LaunchAgents/com.lakehouse.loadgen.plist
+              launchctl load ~/Library/LaunchAgents/com.lakehouse.loadgen.plist
+     Stop:    launchctl unload ~/Library/LaunchAgents/com.lakehouse.loadgen.plist   (and `make loadgen-off` to zero the endpoint) -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.lakehouse.loadgen</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>-lc</string><string>cd __REPO__ &amp;&amp; make loadgen-run sf-runpod-poll >> snowflake/logs/loadgen-launchd.log 2>&amp;1</string></array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Minute</key><integer>23</integer></dict>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
