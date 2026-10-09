@@ -48,6 +48,17 @@ make sf-parity                                # vs. space/data/gold.json → doc
 make sf-all                                   # the four in a row
 ```
 
+Once the Runpod pieces are on (README: "Live source: the Runpod API"), the day-to-day targets are:
+
+```
+make sf-sync                                  # git pull, land the runpod root, bronze --prune, dbt, poll, load, spend log
+make sf-dashboard                             # docs/dashboard.html from LAKEHOUSE.GOLD (+ campaign and live-source panels)
+make sf-runpod-poll && make sf-runpod-load    # one snapshot → @RUNPOD → bronze_runpod_polls → the runpod dbt models
+make sf-spend                                 # docs/spend_log.md; --check gates every campaign slot
+make campaign-status / campaign-park / campaign-restore
+make loadgen-run / loadgen-off / loadgen-on
+```
+
 `make sf-bronze SF_BRONZE_FLAGS=--force` re-appends (and passes FORCE=TRUE to COPY, or Snowflake's load history would
 refuse the same stage object). `make sf-show SF_SHOW_STAGE=1` lists bronze and the stage.
 

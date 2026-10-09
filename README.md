@@ -82,9 +82,11 @@ that cannot reach Maven Central.
   (`space/Dockerfile`, port 7860; `make space-create-docker` / `make space-push-docker`) for an account with HF PRO.
 
 `make sf-dashboard` renders the same page from the Snowflake backend (`LAKEHOUSE.GOLD`, see below) and adds the sections
-only dbt has — the measurement campaign's placement wait by GPU tier, FlashBoot hits against the idle gap, cost per cell,
-and the Runpod account as the API saw it, day by day. The page says which backend built it (`backend snowflake` in the
-meta line); whichever was pushed to `main` last is what the Space serves.
+only dbt has: the measurement campaign — a GPU × image·FlashBoot heatmap of each cell's median cold start, the
+placement-and-pull vs engine-boot split per emberserve cell as stacked bars, FlashBoot off → on dumbbells per GPU and
+image, the per-slot time-of-day dots, $ per cold start per cell, FlashBoot hits against the idle gap — and the Runpod
+account as the API saw it, day by day (active endpoint-days by default, the parked ones behind a toggle). The page says
+which backend built it (`backend snowflake` in the meta line); whichever was pushed to `main` last is what the Space serves.
 
 Both show: every cold start as a dot per engine and weights mode (log scale, FlashBoot hits hollow), worker-vllm's
 boot phases stacked per log, the engine comparison with its cohorts, fast cold responses (the FlashBoot proxy), $ per cold start (request-duration proxy), $ per
@@ -124,7 +126,7 @@ lakehouse/sf/               Snowflake backend: setup · bronze (PUT + COPY INTO 
 snowflake/                  setup.sql, dbt/ (32 models, 4 seeds from seeds/, 95 tests), env.example, README.md
 tools/                      runpod_poll.py (API snapshots), runpod_endpoint.py (create/off/delete), campaign.py (the measurement grid),
                             serverless_coldstart.py (vendored from emberserve; jobs via /run + /status)
-campaign/                   grid.json (cells + prices), estimate.csv (approved), runs.csv (what ran), endpoints.json, launchd.plist.example
+campaign/                   grid.json (cells + prices), estimate.csv (approved), runs.csv (what ran), spend_ack.csv, endpoints.json, launchd.*.plist.example
 data/sources/runpod/        runs made by this repo's tooling (loadgen/, campaign/), the third landing root (`make land --only runpod`)
 docs/parity_report.md       Snowflake gold vs Spark gold, table by table (`make sf-parity`)
 docs/spend_log.md           Runpod $ per endpoint per day vs the campaign / load-generator estimates (`make sf-spend`)
