@@ -1,0 +1,118 @@
+{
+ "kind": "serverless_coldstart",
+ "mode": "queue",
+ "endpoint": "ri6eo614hmu510",
+ "label": "a100_fboff_fetched",
+ "image": "registry.runpod.net/ashwinsreedhar28-emberserve-slim-image-deploy-runpod-dockerfile-slim:038a1a253",
+ "note": "campaign slot 20261009T0510Z; NVIDIA A100 80GB PCIe; flashboot OFF",
+ "max_tokens": 16,
+ "idle_s": 0.0,
+ "runs": [
+  {
+   "health_before": {
+    "jobs": {
+     "completed": 96,
+     "failed": 0,
+     "inProgress": 0,
+     "inQueue": 0,
+     "retried": 0
+    },
+    "workers": {
+     "idle": 0,
+     "initializing": 0,
+     "ready": 0,
+     "running": 0,
+     "throttled": 1,
+     "unhealthy": 0
+    }
+   },
+   "cold": {
+    "status": 200,
+    "total_s": 190.08077733311802,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 187792,
+    "execution_ms": 1851,
+    "worker_id": "vdu5r84w6e9qcy",
+    "submit_wall": 1791523578.494266,
+    "cold": true,
+    "timeline": {
+     "marks": {
+      "container_start": 1791523740.1,
+      "engine_boot": 1791523763.372795,
+      "first_job": 1791523766.6058154,
+      "sdk_ready": 1791523764.0284667,
+      "serve_healthy": 1791523764.014576,
+      "serve_spawned": 1791523742.9267652,
+      "weights_downloaded": 1791523762.2446718,
+      "weights_small_done": 1791523742.9214842,
+      "worker_main": 1791523740.948265,
+      "worker_start": 1791523740.35
+     },
+     "notes": {
+      "engine_boot": "[boot] build_model 0.25 s \u00b7 kv_cache 0.03 s \u00b7 capture_full_graphs 3.38 s \u00b7 load_weights 14.72 s \u00b7 weights_read 14.71 s (weights 16.38 GB in 14.71 s = 7.76 GB/s (8 readers, 64 MB buffers, 12.60 s waiting for the download); engine built before the weights)",
+      "weights_downloaded": "16.40 GB in 19.3 s = 0.85 GB/s (5 shards, 8 at a time)"
+     }
+    },
+    "phases_s": {
+     "schedule_pull_create": 161.606,
+     "container_to_python": 0.25,
+     "python_imports": 0.598,
+     "to_serve_spawn": 1.979,
+     "engine_boot": 20.446,
+     "boot_to_healthy": 0.642,
+     "healthy_to_sdk": 0.014,
+     "sdk_to_first_job": 2.577,
+     "fetch_small_files": 1.973,
+     "download_after_spawn": 19.318,
+     "boot_after_download": 1.128,
+     "submit_to_first_job": 188.112
+    }
+   },
+   "warm": {
+    "status": 200,
+    "total_s": 1.0014204578474164,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 54,
+    "execution_ms": 763,
+    "worker_id": "vdu5r84w6e9qcy",
+    "submit_wall": 1791523768.574173,
+    "cold": false
+   }
+  }
+ ],
+ "summary": {
+  "cold_s": {
+   "n": 1,
+   "min": 190.08077733311802,
+   "median": 190.08077733311802,
+   "max": 190.08077733311802
+  },
+  "cold_delay_ms": {
+   "median": 187792,
+   "values": [
+    187792
+   ]
+  },
+  "warm_total_s": {
+   "median": 1.0014204578474164
+  },
+  "failures": 0,
+  "not_cold": 0,
+  "phases_median_s": {
+   "schedule_pull_create": 161.606,
+   "container_to_python": 0.25,
+   "python_imports": 0.598,
+   "to_serve_spawn": 1.979,
+   "engine_boot": 20.446,
+   "boot_to_healthy": 0.642,
+   "healthy_to_sdk": 0.014,
+   "sdk_to_first_job": 2.577,
+   "fetch_small_files": 1.973,
+   "download_after_spawn": 19.318,
+   "boot_after_download": 1.128,
+   "submit_to_first_job": 188.112
+  }
+ }
+}

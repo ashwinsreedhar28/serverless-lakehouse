@@ -1,0 +1,109 @@
+{
+ "kind": "serverless_coldstart",
+ "mode": "queue",
+ "endpoint": "h90byyjfb0ofbu",
+ "label": "4090_fbon_baked",
+ "image": "registry.runpod.net/ashwinsreedhar28-emberserve-main-deploy-runpod-dockerfile-qwen3:038a1a253",
+ "note": "campaign slot 20261009T0510Z; NVIDIA GeForce RTX 4090; flashboot FLASHBOOT",
+ "max_tokens": 16,
+ "idle_s": 0.0,
+ "runs": [
+  {
+   "health_before": {
+    "jobs": {
+     "completed": 60,
+     "failed": 0,
+     "inProgress": 0,
+     "inQueue": 0,
+     "retried": 0
+    },
+    "workers": {
+     "idle": 1,
+     "initializing": 0,
+     "ready": 1,
+     "running": 0,
+     "throttled": 0,
+     "unhealthy": 0
+    }
+   },
+   "cold": {
+    "status": 200,
+    "total_s": 18.19558854214847,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 16681,
+    "execution_ms": 1409,
+    "worker_id": "wo8m973131omk3",
+    "submit_wall": 1791523147.021605,
+    "cold": true,
+    "timeline": {
+     "marks": {
+      "container_start": 1791523152.52,
+      "engine_boot": 1791523161.2853088,
+      "first_job": 1791523163.965866,
+      "sdk_ready": 1791523161.8495965,
+      "serve_healthy": 1791523161.8436503,
+      "serve_spawned": 1791523153.5729852,
+      "worker_main": 1791523153.5722377,
+      "worker_start": 1791523152.82
+     },
+     "notes": {
+      "engine_boot": "[boot] load_weights 2.31 s \u00b7 weights_read 1.96 s \u00b7 kv_cache 0.06 s \u00b7 capture_full_graphs 3.34 s (weights 16.38 GB in 1.96 s = 8.34 GB/s (8 readers, 64 MB buffers))"
+     }
+    },
+    "phases_s": {
+     "schedule_pull_create": 5.498,
+     "container_to_python": 0.3,
+     "python_imports": 0.752,
+     "to_serve_spawn": 0.001,
+     "engine_boot": 7.712,
+     "boot_to_healthy": 0.558,
+     "healthy_to_sdk": 0.006,
+     "sdk_to_first_job": 2.116,
+     "submit_to_first_job": 16.944
+    }
+   },
+   "warm": {
+    "status": 200,
+    "total_s": 0.46458950033411384,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 20,
+    "execution_ms": 402,
+    "worker_id": "wo8m973131omk3",
+    "submit_wall": 1791523165.2172391,
+    "cold": false
+   }
+  }
+ ],
+ "summary": {
+  "cold_s": {
+   "n": 1,
+   "min": 18.19558854214847,
+   "median": 18.19558854214847,
+   "max": 18.19558854214847
+  },
+  "cold_delay_ms": {
+   "median": 16681,
+   "values": [
+    16681
+   ]
+  },
+  "warm_total_s": {
+   "median": 0.46458950033411384
+  },
+  "failures": 0,
+  "not_cold": 0,
+  "phases_median_s": {
+   "schedule_pull_create": 5.498,
+   "container_to_python": 0.3,
+   "python_imports": 0.752,
+   "to_serve_spawn": 0.001,
+   "engine_boot": 7.712,
+   "boot_to_healthy": 0.558,
+   "healthy_to_sdk": 0.006,
+   "sdk_to_first_job": 2.116,
+   "submit_to_first_job": 16.944
+  }
+ }
+}

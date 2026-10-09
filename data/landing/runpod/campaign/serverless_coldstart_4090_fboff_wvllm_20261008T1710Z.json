@@ -1,0 +1,72 @@
+{
+ "kind": "serverless_coldstart",
+ "mode": "queue",
+ "endpoint": "rvy2p7bfia91fm",
+ "label": "4090_fboff_wvllm",
+ "image": "registry.runpod.net/runpod-workers-worker-vllm-main-dockerfile:26f892c0a",
+ "note": "campaign slot 20261008T1710Z; NVIDIA GeForce RTX 4090; flashboot OFF",
+ "max_tokens": 16,
+ "idle_s": 0.0,
+ "runs": [
+  {
+   "health_before": {
+    "jobs": {
+     "completed": 43,
+     "failed": 0,
+     "inProgress": 0,
+     "inQueue": 0,
+     "retried": 0
+    },
+    "workers": {
+     "idle": 0,
+     "initializing": 0,
+     "ready": 0,
+     "running": 0,
+     "throttled": 0,
+     "unhealthy": 0
+    }
+   },
+   "cold": {
+    "status": 200,
+    "total_s": 242.51157508278266,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 240247,
+    "execution_ms": 562,
+    "worker_id": "k7vw5thh1mvlyu",
+    "submit_wall": 1791479458.943209,
+    "cold": true
+   },
+   "warm": {
+    "status": 200,
+    "total_s": 0.5876157912425697,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 19,
+    "execution_ms": 484,
+    "worker_id": "k7vw5thh1mvlyu",
+    "submit_wall": 1791479701.454205,
+    "cold": false
+   }
+  }
+ ],
+ "summary": {
+  "cold_s": {
+   "n": 1,
+   "min": 242.51157508278266,
+   "median": 242.51157508278266,
+   "max": 242.51157508278266
+  },
+  "cold_delay_ms": {
+   "median": 240247,
+   "values": [
+    240247
+   ]
+  },
+  "warm_total_s": {
+   "median": 0.5876157912425697
+  },
+  "failures": 0,
+  "not_cold": 0
+ }
+}
