@@ -1,8 +1,12 @@
 """Cold-start series against a Runpod Serverless endpoint.
 
-Vendored unchanged from emberserve/scripts/serverless_coldstart.py (emberserve @ 038a1a2, md5 1b60c9cc) so the load
-generator (.github/workflows/loadgen.yml) and the measurement campaign (tools/campaign.py) produce exactly the file format
-the landing zone already knows (`coldstart_series`); only this docstring paragraph was added. Needs `httpx`.
+Vendored from emberserve/scripts/serverless_coldstart.py (emberserve @ 038a1a2, md5 1b60c9cc) so the load generator
+(.github/workflows/loadgen.yml) and the measurement campaign (tools/campaign.py) produce exactly the file format the landing
+zone already knows (`coldstart_series`). One change to the original, in `queue_request`, worth carrying back upstream: the
+job is submitted with `/run` and followed on `/status/<id>` instead of `/runsync`. With placement waits of 5–20 minutes
+(A100/H100 pools, FlashBoot off) the 90 s `/runsync` cap handed back a `sync-…` id that `/status` would not follow, and
+Runpod closed the long-poll outright on others ("Server disconnected without sending a response") — six cells lost in the
+first day. Polling errors are retried, not fatal. The record's fields are unchanged. Needs `httpx`.
 
 Queue endpoint (comparable to worker-vllm's numbers: Runpod's own `delayTime` and
 `executionTime` come back with every `/runsync` response, and `/health` says how many
@@ -92,15 +96,16 @@ def _timeline_of(output) -> dict | None:
 
 
 def queue_request(client: httpx.Client, max_tokens: int, timeout_s: float, want_timeline: bool = False) -> dict:
-    """One job through /runsync; when Runpod's 90 s runsync cap returns IN_QUEUE /
-    IN_PROGRESS (a long cold start), keep polling /status/<id> so the record carries the
-    job's final delayTime and the true wall time."""
+    """One job: submitted with /run, followed on /status/<id> until it leaves IN_QUEUE / IN_PROGRESS
+    or the deadline passes, so the record carries the job's final delayTime and the true wall
+    time however long the placement wait. A transient error while polling is retried; the
+    status code and body of the last answer are what the record reports."""
     body = {"input": {"prompt": PROMPT, "sampling_params": {"max_tokens": max_tokens, "ignore_eos": True}}}
     if want_timeline:
         body["input"]["timeline"] = True
     submit_wall = time.time()
     t0 = time.perf_counter()
-    r = client.post("/runsync", json=body, timeout=timeout_s)
+    r = client.post("/run", json=body, timeout=60.0)
     try:
         j = r.json()
     except ValueError:
@@ -110,7 +115,11 @@ def queue_request(client: httpx.Client, max_tokens: int, timeout_s: float, want_
     while r.status_code == 200 and j.get("status") in ("IN_QUEUE", "IN_PROGRESS") and job_id \
             and time.perf_counter() < deadline:
         time.sleep(2.0)
-        r = client.get(f"/status/{job_id}", timeout=30.0)
+        try:
+            r = client.get(f"/status/{job_id}", timeout=30.0)
+        except httpx.HTTPError:
+            time.sleep(5.0)
+            continue
         try:
             j = r.json()
         except ValueError:

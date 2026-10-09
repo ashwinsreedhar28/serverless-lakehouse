@@ -123,7 +123,7 @@ scripts/audit_bundle.py     one file with every source + doc for an outside revi
 lakehouse/sf/               Snowflake backend: setup · bronze (PUT + COPY INTO + FLATTEN + ledger) · verify · show · parity · runpod (API snapshots) · spend
 snowflake/                  setup.sql, dbt/ (32 models, 4 seeds from seeds/, 95 tests), env.example, README.md
 tools/                      runpod_poll.py (API snapshots), runpod_endpoint.py (create/off/delete), campaign.py (the measurement grid),
-                            serverless_coldstart.py (vendored from emberserve, unchanged)
+                            serverless_coldstart.py (vendored from emberserve; jobs via /run + /status)
 campaign/                   grid.json (cells + prices), estimate.csv (approved), runs.csv (what ran), endpoints.json, launchd.plist.example
 data/sources/runpod/        runs made by this repo's tooling (loadgen/, campaign/), the third landing root (`make land --only runpod`)
 docs/parity_report.md       Snowflake gold vs Spark gold, table by table (`make sf-parity`)
