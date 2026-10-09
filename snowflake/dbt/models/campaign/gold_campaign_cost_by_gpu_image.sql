@@ -9,6 +9,12 @@ with cells as (
            count(*)                                                 as n_cold_ok,
            sum(iff(coalesce(is_flashboot_hit, false), 1, 0))        as n_hits,
            {{ pct('delay_ms', 0.5) }}                               as delay_ms_p50,
+           min(delay_ms)                                            as delay_ms_min,
+           max(delay_ms)                                            as delay_ms_max,
+           -- emberserve cells run with --timeline: the part of the wait that was placement + image pull + container create,
+           -- and the engine's own boot; null for worker-vllm, whose handler records no timeline
+           {{ pct('placement_pull_create_s', 0.5) }}                as placement_pull_create_s_p50,
+           {{ pct('engine_boot_s', 0.5) }}                          as engine_boot_s_p50,
            {{ pct('request_duration_s', 0.5) }}                     as request_duration_s_p50,
            {{ pct('est_cost_usd', 0.5) }}                           as est_cost_usd_p50_proxy,
            round(sum(est_cost_usd), 4)                              as est_cost_usd_total_proxy,
@@ -31,7 +37,8 @@ billed as (
 )
 select
     c.series_label as cell, c.gpu_model, c.gpu_tier, c.flashboot, c.weights_mode, c.engine, c.endpoint_id,
-    c.n_cold_ok, c.n_hits, c.delay_ms_p50, c.request_duration_s_p50, c.est_cost_usd_p50_proxy, c.est_cost_usd_total_proxy,
+    c.n_cold_ok, c.n_hits, c.delay_ms_p50, c.delay_ms_min, c.delay_ms_max, c.placement_pull_create_s_p50, c.engine_boot_s_p50,
+    c.request_duration_s_p50, c.est_cost_usd_p50_proxy, c.est_cost_usd_total_proxy,
     b.billed_usd_endpoint_hours, b.n_billed_hours,
     c.first_request_utc, c.last_request_utc,
     sysdate()                                                       as gold_built_at
