@@ -6,7 +6,7 @@ colorTo: gray
 sdk: static
 pinned: false
 license: mit
-short_description: Lakehouse over Runpod Serverless runs, on Spark/Delta and on Snowflake/dbt
+short_description: Runpod Serverless cold starts: Spark/Delta and Snowflake/dbt
 ---
 
 # serverless-lakehouse — dashboard
