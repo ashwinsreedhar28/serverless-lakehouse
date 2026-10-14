@@ -400,7 +400,7 @@ const GOLD = /*GOLD_JSON*/null;
     { h: "min–max", num: true, f: (r) => `${fmt.s(r.cold_delay_ms_min)} – ${fmt.s(r.cold_delay_ms_max)}` },
     { h: "$ / cold start", num: true, f: (r) => fmt.usd(r.cold_est_cost_usd_p50) },
     { h: "warm exec", num: true, f: (r) => fmt.s(r.warm_exec_ms_p50) },
-  ], ENG);
+  ], ENG.filter((r) => r.scope === "pooled" || r.n_full_boots > 0));   // gold keeps 0-boot cohorts so rows sum; the table needn't show them
   table($("tb-fb"), [
     { h: "engine", k: "engine" }, { h: "model", k: "model" }, { h: "endpoint", k: "endpoint_id" }, { h: "setting", k: "flashboot_setting" },
     { h: "cold", k: "n_cold", num: true }, { h: "failed", num: true, f: (r) => r.n_cold_failed ? String(r.n_cold_failed) : "" }, { h: "hits", k: "n_hits", num: true },
@@ -501,15 +501,18 @@ const GOLD = /*GOLD_JSON*/null;
     const fastest = [...cells].sort((a, b) => a.delay_ms_p50 - b.delay_ms_p50)[0], slowest = [...cells].sort((a, b) => b.delay_ms_p50 - a.delay_ms_p50)[0];
     const billed = RD.reduce((a, r) => a + (r.total_usd || 0), 0);
     const cellName = (r) => `${r.gpu_model} · ${IMAGE_SHORT[imageKey(r)] || imageKey(r)} · FlashBoot ${r.flashboot}`;
-    const planned = M.campaign_planned_cold_starts || 0;
+    const planned = M.campaign_planned_cold_starts || 0, done = planned > 0 && nCold >= planned;
+    const perCell = planned && cells.length && planned % cells.length === 0 ? ` (${cells.length} cells × ${planned / cells.length})` : "";
     const k = [
-      { label: "Cold starts measured", value: `${fmt.int(nCold)}${planned ? `<small>of ${fmt.int(planned)}</small>` : ""}`,
-        sub: planned ? `<div class="meter"><div class="fill" style="width:${Math.min(100, Math.round(nCold / planned * 100))}%"></div></div>` : "", html: true },
+      // past the plan: say so, instead of a meter that reads "252 of 240" (retried slots add cold starts to a cell)
+      { label: "Cold starts measured", value: done ? fmt.int(nCold) : `${fmt.int(nCold)}${planned ? `<small>of ${fmt.int(planned)}</small>` : ""}`,
+        sub: planned ? `<div class="meter"><div class="fill" style="width:${Math.min(100, Math.round(nCold / planned * 100))}%"></div></div>` +
+                       `<div>${fmt.int(planned)} planned${perCell}${done ? " · complete" : ""}</div>` : "", html: true },
       { label: "Fastest cell (median)", value: fmt.s(fastest.delay_ms_p50), sub: cellName(fastest) },
       { label: "Slowest cell (median)", value: fmt.s(slowest.delay_ms_p50), sub: cellName(slowest) },
       { label: "Resumes under 5 s", value: `${fmt.int(nHits)}<small>of ${fmt.int(nCold)}</small>`, sub: "the FlashBoot hit proxy, at a six-hour cadence" },
     ];
-    if (RD.length) k.push({ label: "Runpod billed, all endpoints", value: fmt.usd(billed), sub: `API billing buckets, ${RD.length} endpoint-days polled` });
+    if (RD.length) k.push({ label: "Runpod billed, all endpoints", value: fmt.usd(billed), sub: `API billing buckets at the last poll, ${RD.length} endpoint-days (final figure: docs/spend_log.md)` });
     $("camp-kpis").innerHTML = k.map((x) => `<div class="kpi"><div class="label">${esc(x.label)}</div><div class="value">${x.value}</div><div class="sub">${x.html ? x.sub : esc(x.sub)}</div></div>`).join("");
 
     // heatmap: GPU × (image × FlashBoot), sequential blue on a log scale
@@ -544,7 +547,9 @@ const GOLD = /*GOLD_JSON*/null;
       });
       g += `</svg>`;
       $("ch-camp-heat").innerHTML = g; bindTips($("ch-camp-heat"));
-      $("camp-heat-note").textContent = `Scale: ${fmt.s(Math.pow(10, lo))} (lightest) to ${fmt.s(Math.pow(10, hi))} (darkest), log. Grey = no successful cold start in that cell yet.`;
+      const nEmpty = gpus.length * cols.length - cells.filter((r) => gpus.includes(r.gpu_model) && cols.some((c) => imageKey(r) === c.k && r.flashboot === c.fb)).length;
+      $("camp-heat-note").textContent = `Scale: ${fmt.s(Math.pow(10, lo))} (lightest) to ${fmt.s(Math.pow(10, hi))} (darkest), log.` +
+        (nEmpty > 0 ? ` Grey = no successful cold start in that cell (${nEmpty} of ${gpus.length * cols.length}).` : "");
     })();
 
     // where the seconds go: stacked placement+pull | engine boot, emberserve cells
@@ -683,7 +688,7 @@ const GOLD = /*GOLD_JSON*/null;
     // FlashBoot vs idle gap
     const GAP_ORDER = ["first", "<2 min", "2-10 min", "10-60 min", ">60 min"];
     const cfCold = CF.reduce((a, r) => a + r.n_cold, 0), cfHits = CF.reduce((a, r) => a + r.n_hits, 0);
-    $("camp-fb-note").textContent = CF.length ? `${fmt.int(cfHits)} of ${fmt.int(cfCold)} cold-labelled requests came back under the ${M.flashboot_hit_ms / 1000} s threshold across every gap bucket, FlashBoot on or off.` : "";
+    $("camp-fb-note").textContent = CF.length ? `${fmt.int(cfHits)} of ${fmt.int(cfCold)} cold-labelled requests came back under the ${M.flashboot_hit_ms / 1000} s threshold across every gap bucket, FlashBoot on or off (campaign and generator endpoints).` : "";
     table($("tb-camp-fb"), [
       { h: "gpu", k: "gpu_model" }, { h: "image", f: (r) => esc(IMAGE_SHORT[imageKey(r)] || imageKey(r)) }, { h: "flashboot", k: "flashboot" }, { h: "kind", k: "campaign_kind" }, { h: "gap since prev", k: "gap_bucket" },
       { h: "cold", k: "n_cold", num: true }, { h: "hits", k: "n_hits", num: true },
