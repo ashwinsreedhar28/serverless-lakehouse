@@ -1,0 +1,72 @@
+{
+ "kind": "serverless_coldstart",
+ "mode": "queue",
+ "endpoint": "nfr1cqjnqikgwm",
+ "label": "loadgen_4090_flashboot_on_baked",
+ "image": "emberserve Qwen2.5-0.5B-Instruct, weights baked in (loadgen)",
+ "note": "loadgen hourly 20261013T1823Z (mac)",
+ "max_tokens": 16,
+ "idle_s": 0.0,
+ "runs": [
+  {
+   "health_before": {
+    "jobs": {
+     "completed": 2663,
+     "failed": 6,
+     "inProgress": 0,
+     "inQueue": 0,
+     "retried": 0
+    },
+    "workers": {
+     "idle": 1,
+     "initializing": 0,
+     "ready": 1,
+     "running": 0,
+     "throttled": 0,
+     "unhealthy": 0
+    }
+   },
+   "cold": {
+    "status": 200,
+    "total_s": 26.643039625138044,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 23582,
+    "execution_ms": 1006,
+    "worker_id": "ztaofcg9v1h0kj",
+    "submit_wall": 1791916854.7490182,
+    "cold": true
+   },
+   "warm": {
+    "status": 200,
+    "total_s": 2.2662286669947207,
+    "ok": true,
+    "job_status": "COMPLETED",
+    "delay_ms": 15,
+    "execution_ms": 246,
+    "worker_id": "ztaofcg9v1h0kj",
+    "submit_wall": 1791916881.391957,
+    "cold": false
+   }
+  }
+ ],
+ "summary": {
+  "cold_s": {
+   "n": 1,
+   "min": 26.643039625138044,
+   "median": 26.643039625138044,
+   "max": 26.643039625138044
+  },
+  "cold_delay_ms": {
+   "median": 23582,
+   "values": [
+    23582
+   ]
+  },
+  "warm_total_s": {
+   "median": 2.2662286669947207
+  },
+  "failures": 0,
+  "not_cold": 0
+ }
+}
