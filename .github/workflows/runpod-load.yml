@@ -47,6 +47,22 @@ jobs:
           SNOWFLAKE_PRIVATE_KEY_PATH: /home/runner/.snowflake/lakehouse_rsa_key.p8
         working-directory: snowflake/dbt
         run: dbt seed --no-use-colors && dbt build --no-use-colors
+      - name: endpoint config history (SCD Type 2) summary
+        if: always()
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PRIVATE_KEY_PATH: /home/runner/.snowflake/lakehouse_rsa_key.p8
+        working-directory: snowflake/dbt
+        run: |
+          dbt show --no-use-colors --select gold_scd2_asof_agreement
+          dbt show --no-use-colors --inline "
+            select 'polls' as history, count(*) as n_versions, count(distinct endpoint_id) as n_endpoints,
+                   count_if(is_current) as n_current, count_if(is_deleted) as n_deleted from {{ ref('dim_runpod_endpoint') }}
+            union all select 'release log', count(*), count(distinct endpoint_id), count_if(is_current), count_if(is_deleted)
+              from {{ ref('dim_runpod_endpoint_release') }}
+            union all select 'dbt snapshot', count(*), count(distinct endpoint_id), count_if(dbt_valid_to is null), null
+              from {{ ref('snap_runpod_endpoint_config') }}"
       - name: spend log
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}

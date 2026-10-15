@@ -398,6 +398,38 @@ What the first two campaign slots taught about the API, each now handled in `too
   at a 6-hour cadence is placement (image-warm host, 2–5 s) rather than a sub-5 s resume (none in 116), which the
   threshold "hit rate" cannot see — the medians can. The A100 pool (`AMPERE_80`) waits longest for every image.
 
+### Endpoint config history (SCD Type 2)
+
+Every poll carries every endpoint's full config, so the history is already in bronze; three ways of keeping it as a
+slowly changing dimension sit side by side in `snowflake/dbt/models/runpod/` and `snowflake/dbt/snapshots/`:
+
+- `dim_runpod_endpoint` — check strategy, rebuilt from the *whole* poll history on every run: a version starts at the
+  first poll whose tracked config (`endpoint_tracked_cols()`: GPU selection, CUDA floor, image, data centers, disk,
+  FlashBoot, idle timeout, scaling, request timeout, volumes) differs from the poll before; half-open windows
+  `[valid_from_utc, valid_to_utc)`; an endpoint missing from a later poll closes as `is_deleted`. `changed_after_utc` says
+  how late `valid_from_utc` can be — the change happened somewhere in that gap. `workers.min/max` are current-value
+  (Type 1) columns: the campaign flips them inside one cell, faster than any poll.
+- `dim_runpod_endpoint_release` — timestamp strategy from Runpod's own change log (`/releases`, one release per change
+  that needs a worker rollout: image, GPU selection, CUDA floor, data centers, disk). Releases are diffs, so each column
+  is rebuilt per release from the nearest diff before it (`new`) or after it (`old`). `valid_from_utc` is the release's
+  `createdAt`, and no version is lost between polls. FlashBoot, workers and scaling write no release, so this history
+  cannot hold them.
+- `snap_runpod_endpoint_config` — a dbt snapshot (check strategy, `hard_deletes: invalidate`) of the latest poll. It is
+  the history itself rather than something rebuilt from bronze, and it samples at dbt-run cadence.
+
+Checks: `scd2_windows` (one open row per endpoint, no gaps, no overlaps) on all three; `assert_release_dim_matches_every_poll`
+compares the release rebuild with what every poll saw (1,616 of 1,616 poll × endpoint observations agree on all six columns
+over the Mac's 154 polls, Oct 7–15).
+
+What the campaign shows (`gold_campaign_config_asof`, `gold_scd2_asof_agreement`): joined point-in-time on endpoint and
+request time, the release history puts **257 of 257** campaign cold starts on their cell's GPU; the hourly poll history
+puts **65 of 257 (25.3 %)** there and gets FlashBoot right for **130 of 257 (50.6 %)** — chance level for four GPUs and an
+on/off switch. A cell re-points its endpoint minutes before its cold start, so the first poll to see the new config comes
+*after* the cold start, which then joins to the previous cell's version. Over the same week the polls saw 57 changes to
+the release-tracked columns while the log holds 147 releases that changed them. For per-cell facts the cell's own recorded
+design (the seed row, written when the cell ran) is the source of truth; the poll history is good for endpoints that
+change on a timescale of hours or slower.
+
 ## Audit
 
 Before publishing, the whole repo was handed to an external reviewer model (`scripts/audit_bundle.py` packs it;
