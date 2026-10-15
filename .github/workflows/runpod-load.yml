@@ -59,8 +59,8 @@ jobs:
         # The build's non-passing nodes and the two tables below also go out as run annotations (`gh run view` shows them).
         run: |
           python - <<'PY'
-          import json, collections
-          rr = json.load(open("target/run_results.json"))["results"]
+          import json, collections, os
+          rr = json.load(open("target/run_results.json"))["results"] if os.path.exists("target/run_results.json") else []
           n = collections.Counter(r["status"] for r in rr)
           bad = [f'{r["status"]}: {r["unique_id"].split(".")[-1]} ({r.get("failures")})' for r in rr if r["status"] not in ("success", "pass")]
           print(f"::notice title=dbt build::{dict(n)}" + "%0A" + "%0A".join(bad[:40]))
