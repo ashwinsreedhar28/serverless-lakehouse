@@ -53,9 +53,11 @@ def load(run_label: str) -> int:
             PATTERN = '.*polls/.*\\\\.json(\\\\.gz)?'
             FILE_FORMAT = (FORMAT_NAME = 'LAKEHOUSE.LANDING.FF_JSON_DOC')
             ON_ERROR = ABORT_STATEMENT FORCE = FALSE""")
-        loaded = [r for r in rows if r[1] == "LOADED"]
+        # With nothing new, COPY returns one single-column row ("Copy executed with 0 files processed."), so check that
+        # before indexing the per-file columns.
         if rows and rows[0][0] == "Copy executed with 0 files processed.":
-            loaded = []
+            rows = []
+        loaded = [r for r in rows if r[1] == "LOADED"]
         for r in loaded:
             name = r[0].rsplit("/", 1)[-1].removesuffix(".gz")
             sha = next((seg for seg in r[0].split("/") if len(seg) == 64), "")

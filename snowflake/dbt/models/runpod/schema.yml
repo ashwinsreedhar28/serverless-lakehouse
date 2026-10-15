@@ -41,3 +41,68 @@ models:
     columns:
       - name: verdict
         tests: [not_null, {accepted_values: {arguments: {values: ["agree", "disagree", "api fills a gap", "endpoint no longer exists"]}}}]
+  - name: silver_runpod_endpoint_config
+    description: One row per poll × endpoint with the config in canonical text (the /releases spelling) and config_hash.
+    columns:
+      - name: endpoint_id
+        tests: [not_null]
+      - name: config_hash
+        tests: [not_null]
+  - name: silver_runpod_endpoint_current
+    description: The latest poll's endpoint configs — the input to the dbt snapshot snap_runpod_endpoint_config.
+    columns:
+      - name: endpoint_id
+        tests: [not_null, unique]
+  - name: silver_runpod_releases
+    description: Runpod's release log per endpoint (one row per release version × changed field); values kept for tracked columns only.
+    columns:
+      - name: endpoint_id
+        tests: [not_null]
+      - name: release_version
+        tests: [not_null]
+      - name: created_at_utc
+        tests: [not_null]
+  - name: dim_runpod_endpoint
+    description: SCD Type 2 of endpoint config rebuilt from every poll (check strategy over the full poll history).
+      scd2_windows can only catch tied or inverted windows here (valid_to is the next valid_from by construction);
+      assert_scd2_dims_cover_every_poll checks coverage.
+    tests:
+      - scd2_windows: {arguments: {key: endpoint_id}}
+    columns:
+      - name: endpoint_version_key
+        description: Surrogate key of one version (endpoint_id + valid_from_utc), like dbt_scd_id.
+        tests: [not_null, unique]
+      - name: valid_from_utc
+        description: First poll that saw this version. The change happened in (changed_after_utc, valid_from_utc].
+        tests: [not_null]
+      - name: valid_to_utc
+        description: Exclusive end — the next version's valid_from_utc, or the poll that found the endpoint gone; null while current.
+      - name: is_current
+        tests: [not_null]
+  - name: dim_runpod_endpoint_release
+    description: SCD Type 2 of the release-tracked config columns rebuilt from Runpod's release log (timestamp strategy).
+    tests:
+      - scd2_windows: {arguments: {key: endpoint_id}}
+    columns:
+      - name: endpoint_release_key
+        tests: [not_null, unique]
+      - name: valid_from_utc
+        description: createdAt of the first release in this version — when the change actually happened.
+        tests: [not_null]
+  - name: gold_campaign_config_asof
+    description: Each campaign cold start joined point-in-time to both config histories beside the cell's recorded design.
+    columns:
+      - name: endpoint_id
+        tests: [not_null]
+  - name: gold_scd2_asof_agreement
+    description: Share of completed campaign cold starts each history puts on the config the cell asked for.
+    columns:
+      - name: n_cold_starts
+        tests: [not_null]
+  - name: gold_scd2_history_summary
+    description: The figures the README quotes about the endpoint-config histories, one row per metric.
+    columns:
+      - name: metric
+        tests: [not_null, unique]
+      - name: value
+        tests: [not_null]

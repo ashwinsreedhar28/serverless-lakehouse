@@ -39,14 +39,56 @@ jobs:
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
-        run: python -u -m lakehouse.sf.runpod load --run-label "gha_${GITHUB_RUN_ID}"
+        # on failure the tail of the output also goes out as an annotation (the job log is not always reachable)
+        run: |
+          set +e
+          python -u -m lakehouse.sf.runpod load --run-label "gha_${GITHUB_RUN_ID}" 2>&1 | tee load.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -ne 0 ] && echo "::error title=runpod load::$(tail -c 1500 load.log | sed ':a;N;$!ba;s/\n/%0A/g')"
+          exit "$rc"
       - name: dbt build (everything)
+        id: build
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY_PATH: /home/runner/.snowflake/lakehouse_rsa_key.p8
         working-directory: snowflake/dbt
         run: dbt seed --no-use-colors && dbt build --no-use-colors
+      # The job log is not always reachable from where this repo is worked on, so the build's outcome and the SCD2 figures
+      # also go out as run annotations (`gh run view` / the checks API show them).
+      - name: dbt build result
+        if: always() && steps.build.outcome != 'skipped'
+        working-directory: snowflake/dbt
+        run: |
+          python - <<'PY'
+          import json, collections, os
+          p = "target/run_results.json"
+          rr = json.load(open(p))["results"] if os.path.exists(p) else []
+          n = collections.Counter(r["status"] for r in rr)
+          bad = [f'{r["status"]}: {r["unique_id"].split(".")[-1]} ({r.get("failures")})' for r in rr if r["status"] not in ("success", "pass")]
+          print(f"::notice title=dbt build::{dict(n)}" + "".join("%0A" + b for b in bad[:40]))
+          PY
+      - name: endpoint config history (SCD Type 2) figures
+        if: steps.build.outcome == 'success'
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+        run: |
+          python - <<'PY'
+          from lakehouse.sf.client import connect
+          cur = connect("GOLD").cursor()
+          for table, sql in [
+              ("gold_scd2_history_summary", "select metric, value, detail from GOLD.gold_scd2_history_summary order by ord"),
+              ("gold_scd2_asof_agreement", "select history, attribute, n_cold_starts, n_agree, pct_agree from GOLD.gold_scd2_asof_agreement"),
+          ]:
+              try:
+                  rows = cur.execute(sql).fetchall()
+                  lines = [" | ".join("" if v is None else str(v) for v in r) for r in rows]
+                  print(table, *lines, sep="\n")
+                  print(f"::notice title={table}::" + "%0A".join(lines))
+              except Exception as e:   # informational step: report, do not fail the backstop
+                  print(f"::warning title={table}::{type(e).__name__}: {e}".replace("\n", " "))
+          PY
       - name: spend log
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}

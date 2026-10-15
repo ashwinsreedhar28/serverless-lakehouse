@@ -48,6 +48,8 @@ seeds:
       +column_types: {series_label: varchar, run_index: integer, host_state: varchar, evidence: varchar, note: varchar, source: varchar}
     coldstart_request_overrides:
       +column_types: {endpoint_id: varchar, ts_utc: varchar, gpu_label: varchar, evidence: varchar, note: varchar, source: varchar}
+    campaign_gpu_pins:
+      +column_types: {gpu_model: varchar, gpu_type: varchar, pool: varchar, gpu_ids: varchar, source: varchar}
 
 tests:
   serverless_lakehouse:

@@ -1,0 +1,24 @@
+# The dbt-native way to keep SCD Type 2 history: each `dbt snapshot` (and `dbt build`) compares the latest poll's config
+# to the open row per endpoint and closes / inserts on a change. Unlike dim_runpod_endpoint it cannot be rebuilt — the
+# table *is* the history — and it samples at dbt-run cadence (the Mac's sf-runpod-load, the GitHub runpod-load backstop),
+# not at poll cadence. Kept beside the derived dimension so the two can be compared.
+snapshots:
+  - name: snap_runpod_endpoint_config
+    relation: ref('silver_runpod_endpoint_current')
+    description: >
+      dbt snapshot (check strategy) of each endpoint's tracked config. dbt_valid_from is the poll time of the first
+      snapshot that saw a version (updated_at = polled_at_utc); a deleted endpoint's row is closed at the snapshot run
+      that no longer saw it.
+    config:
+      schema: SILVER
+      unique_key: endpoint_id
+      strategy: check
+      check_cols: [gpu_ids, min_cuda, allowed_cuda, image, locations, disk_gb, flashboot, idle_timeout_s,
+                   scaling_type, scaling_value, request_timeout_ms, network_volumes]
+      updated_at: polled_at_utc
+      hard_deletes: invalidate
+      tags: [runpod]
+    data_tests:
+      # warn, not error: an endpoint missing from one latest poll is invalidated and reopens with a gap, which is what
+      # the snapshot really saw; it should not fail the scheduled build
+      - scd2_windows: {arguments: {key: endpoint_id, valid_from: dbt_valid_from, valid_to: dbt_valid_to}, config: {severity: warn}}

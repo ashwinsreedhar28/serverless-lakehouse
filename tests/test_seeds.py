@@ -61,3 +61,20 @@ def test_request_overrides():
 
 def test_evidence_file_present():
     assert (ROOT / "evidence" / "gpu_per_cycle.txt").is_file()
+
+
+def test_campaign_gpu_pins():
+    # the GPU selection tools/campaign.py PATCHes for each campaign GPU (pool, minus the pool's other GPU types), in the
+    # canonical `gpuIds` spelling dim_runpod_endpoint_release uses: sorted pools, then sorted '-'-prefixed exclusions
+    cols, data = rows("campaign_gpu_pins.csv")
+    assert cols == ["gpu_model", "gpu_type", "pool", "gpu_ids", "source"]
+    assert len({r["gpu_model"] for r in data}) == len(data) == 4
+    assert len({r["gpu_ids"] for r in data}) == len(data)           # four GPUs, four distinct selections
+    series_models = {r["gpu_model"] for r in rows("coldstart_series.csv")[1] if "campaign cell" in r["notes"]}
+    assert series_models <= {r["gpu_model"] for r in data}, series_models
+    for r in data:
+        parts = r["gpu_ids"].split(",")
+        pools = [p for p in parts if not p.startswith("-")]
+        excl = [p for p in parts if p.startswith("-")]
+        assert parts == sorted(pools) + sorted(excl), r
+        assert pools == [r["pool"]] and r["source"], r
