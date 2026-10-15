@@ -56,15 +56,26 @@ jobs:
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PRIVATE_KEY_PATH: /home/runner/.snowflake/lakehouse_rsa_key.p8
         working-directory: snowflake/dbt
+        # The build's non-passing nodes and the two tables below also go out as run annotations (`gh run view` shows them).
         run: |
-          dbt show --no-use-colors --select gold_scd2_asof_agreement
+          python - <<'PY'
+          import json, collections
+          rr = json.load(open("target/run_results.json"))["results"]
+          n = collections.Counter(r["status"] for r in rr)
+          bad = [f'{r["status"]}: {r["unique_id"].split(".")[-1]} ({r.get("failures")})' for r in rr if r["status"] not in ("success", "pass")]
+          print(f"::notice title=dbt build::{dict(n)}" + "%0A" + "%0A".join(bad[:40]))
+          PY
+          dbt show --no-use-colors --select gold_scd2_asof_agreement | tee show_agreement.txt
           dbt show --no-use-colors --inline "
             select 'polls' as history, count(*) as n_versions, count(distinct endpoint_id) as n_endpoints,
                    count_if(is_current) as n_current, count_if(is_deleted) as n_deleted from {{ ref('dim_runpod_endpoint') }}
             union all select 'release log', count(*), count(distinct endpoint_id), count_if(is_current), count_if(is_deleted)
               from {{ ref('dim_runpod_endpoint_release') }}
             union all select 'dbt snapshot', count(*), count(distinct endpoint_id), count_if(dbt_valid_to is null), null
-              from {{ ref('snap_runpod_endpoint_config') }}"
+              from {{ ref('snap_runpod_endpoint_config') }}" | tee show_versions.txt
+          for f in show_agreement.txt show_versions.txt; do
+            echo "::notice title=$f::$(grep '^|' "$f" | sed ':a;N;$!ba;s/\n/%0A/g')"
+          done
       - name: spend log
         env:
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
