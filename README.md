@@ -417,16 +417,25 @@ slowly changing dimension sit side by side in `snowflake/dbt/models/runpod/` and
 - `snap_runpod_endpoint_config` — a dbt snapshot (check strategy, `hard_deletes: invalidate`) of the latest poll. It is
   the history itself rather than something rebuilt from bronze, and it samples at dbt-run cadence.
 
-Checks: `scd2_windows` (one open row per endpoint, no gaps, no overlaps) on all three; `assert_release_dim_matches_every_poll`
-compares the release rebuild with what every poll in bronze saw, column for column (it passes; over the Mac's 154 polls,
-Oct 7–15, that is 1,616 of 1,616 poll × endpoint observations).
+Checks: `scd2_windows` (non-empty windows, at most one open row per endpoint, no gap or overlap between consecutive
+rows) on all three, an error on the two dimensions and a warning on the snapshot, where a missed poll legitimately leaves
+a gap; `assert_scd2_dims_cover_every_poll` (every poll × endpoint observation falls in exactly one version of each
+dimension, the poll-built version holds exactly the config that poll saw, and every endpoint that was not deleted has
+exactly one current row); `assert_release_dim_matches_every_poll` (the release rebuild against what every poll saw).
 
-What the campaign shows (`gold_campaign_config_asof`, `gold_scd2_asof_agreement`): joined point-in-time on endpoint and
-request time, the release history puts **267 of 267** campaign cold starts on their cell's GPU; the poll history puts
-**72 of 267 (27.0 %)** there and gets FlashBoot right for **132 of 267 (49.4 %)** — chance level for four GPUs and an
-on/off switch. A cell re-points its endpoint minutes before its cold start, so the first poll to see the new config comes
-*after* the cold start, which then joins to the previous cell's version. Over the Mac's 154 polls the polls saw 57 changes
-to the release-tracked columns while the log holds 147 releases that changed them in the same window. For per-cell facts the cell's own recorded
+`gold_scd2_history_summary` holds every figure below, computed from all 190 polls in bronze (Mac and GitHub poller,
+Oct 7 22:28 – Oct 15 23:27 UTC): the release rebuild matches **1,997 of 1,997** poll × endpoint observations on all six
+release columns; the polls saw **68** changes to those columns while the release log holds **147** in the same window;
+the poll history has 89 versions, the release history 265 (it reaches back to Sep 23, before the poller existed), the
+snapshot 13 (it knows nothing before its first run).
+
+What the campaign shows (`gold_campaign_config_asof`, `gold_scd2_asof_agreement`): each of the **252** completed campaign
+cold starts is joined point-in-time on endpoint and request time and scored against the GPU selection its cell PATCHed
+(`seeds/campaign_gpu_pins.csv`: Runpod's published pool for the GPU minus the pool's other types — independent of
+either history) and the cell's FlashBoot design. The release history puts **252 of 252** on the right GPU; the poll
+history **62 of 252 (24.6 %)**, and FlashBoot right for **126 of 252 (50.0 %)** — chance level for four GPUs and an
+on/off switch. A cell re-points its endpoint minutes before its cold start, so the first poll to see the new config
+comes *after* the cold start, which then joins to the previous cell's version. For per-cell facts the cell's own recorded
 design (the seed row, written when the cell ran) is the source of truth; the poll history is good for endpoints that
 change on a timescale of hours or slower.
 
