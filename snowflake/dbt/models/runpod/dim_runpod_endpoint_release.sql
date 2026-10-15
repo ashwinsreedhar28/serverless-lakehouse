@@ -8,6 +8,7 @@
       1. the `new` of the latest diff of that column at or before this release, else
       2. the `old` of the earliest diff after it (the value it held until that change), else
       3. the value the latest poll sees (the column never changed in the whole log).
+    A diff to or from null is carried through the fill as '<unset>' so it is not mistaken for "no diff here".
     Consecutive releases that leave every tracked column unchanged (env or registry-auth edits) collapse into one version.
     assert_release_dim_matches_every_poll checks the rebuild against what every poll actually saw.
 
@@ -36,11 +37,11 @@ grid as (
 ),
 filled as (
     select g.*,
-        last_value(iff(has_diff, coalesce(new_value, 'ALL'), null)) ignore nulls over (
+        last_value(iff(has_diff, coalesce(new_value, '<unset>'), null)) ignore nulls over (
             partition by endpoint_id, column_name order by release_version
             rows between unbounded preceding and current row)                              as value_from_new,
         -- descending order: the closest release at or after this one that changed the column, and what it changed from
-        last_value(iff(has_diff, coalesce(old_value, 'ALL'), null)) ignore nulls over (
+        last_value(iff(has_diff, coalesce(old_value, '<unset>'), null)) ignore nulls over (
             partition by endpoint_id, column_name order by release_version desc
             rows between unbounded preceding and current row)                              as value_from_old
     from grid g
@@ -51,8 +52,8 @@ cur as (
 ),
 valued as (
     select f.endpoint_id, f.release_version, f.created_at_utc, f.column_name,
-           coalesce(f.value_from_new, f.value_from_old,
-                    case f.column_name {% for c in cols %}when '{{ c }}' then k.{{ c }} {% endfor %}end) as value
+           nullif(coalesce(f.value_from_new, f.value_from_old,
+                    case f.column_name {% for c in cols %}when '{{ c }}' then k.{{ c }} {% endfor %}end), '<unset>') as value
     from filled f
     left join cur k on k.endpoint_id = f.endpoint_id
 ),

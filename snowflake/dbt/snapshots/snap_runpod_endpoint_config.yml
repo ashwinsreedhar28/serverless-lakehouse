@@ -19,4 +19,6 @@ snapshots:
       hard_deletes: invalidate
       tags: [runpod]
     data_tests:
-      - scd2_windows: {arguments: {key: endpoint_id, valid_from: dbt_valid_from, valid_to: dbt_valid_to}}
+      # warn, not error: an endpoint missing from one latest poll is invalidated and reopens with a gap, which is what
+      # the snapshot really saw; it should not fail the scheduled build
+      - scd2_windows: {arguments: {key: endpoint_id, valid_from: dbt_valid_from, valid_to: dbt_valid_to}, config: {severity: warn}}

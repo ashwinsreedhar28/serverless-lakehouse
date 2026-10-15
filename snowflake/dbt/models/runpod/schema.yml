@@ -64,6 +64,8 @@ models:
         tests: [not_null]
   - name: dim_runpod_endpoint
     description: SCD Type 2 of endpoint config rebuilt from every poll (check strategy over the full poll history).
+      scd2_windows can only catch tied or inverted windows here (valid_to is the next valid_from by construction);
+      assert_scd2_dims_cover_every_poll checks coverage.
     tests:
       - scd2_windows: {arguments: {key: endpoint_id}}
     columns:
@@ -93,7 +95,14 @@ models:
       - name: endpoint_id
         tests: [not_null]
   - name: gold_scd2_asof_agreement
-    description: Share of campaign cold starts each history puts on the config the cell actually ran with.
+    description: Share of completed campaign cold starts each history puts on the config the cell asked for.
     columns:
-      - name: pct_agree
+      - name: n_cold_starts
+        tests: [not_null]
+  - name: gold_scd2_history_summary
+    description: The figures the README quotes about the endpoint-config histories, one row per metric.
+    columns:
+      - name: metric
+        tests: [not_null, unique]
+      - name: value
         tests: [not_null]

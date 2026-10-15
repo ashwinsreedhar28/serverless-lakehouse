@@ -1,17 +1,17 @@
 {{ config(schema='GOLD') }}
-{#- Every campaign cold start, joined point-in-time (endpoint_id + request time inside [valid_from, valid_to)) to both
-    config histories, beside the design the campaign recorded for its cell (the seed row: GPU model, FlashBoot).
-
-    The campaign re-points three endpoints every cell, minutes apart, so it is the hard case for a sampled history:
-      - GPU from the release log (timestamp strategy) vs GPU from the polls (check strategy, hourly)
-      - FlashBoot only from the polls: Runpod writes no release for it, so there is no exact source.
-    gpu_pin is the selection the release log shows for that GPU model; one pin per model is itself checked
-    (assert_campaign_gpu_has_one_pin). -#}
+{#- Every completed campaign cold start (kind = 'cold' and ok: the same set the campaign gold tables count), joined
+    point-in-time (endpoint_id + request time inside [valid_from, valid_to)) to both config histories, and scored
+    against what the cell actually asked Runpod for:
+      - GPU: seeds/campaign_gpu_pins.csv, the selection tools/campaign.py PATCHes for each GPU model (pool minus the
+        pool's other types, per Runpod's published pool list) — independent of either history
+      - FlashBoot: the cell's design (seed row). Only the poll history has FlashBoot: Runpod writes no release for it.
+    The campaign re-points three endpoints every cell, minutes before each cold start, so this is the hard case for a
+    sampled history. -#}
 with cold as (
     select series_label, endpoint_id, run_index, source_file, request_ts_utc,
            gpu_model as design_gpu_model, flashboot as design_flashboot
     from {{ ref('silver_campaign_requests') }}
-    where kind = 'cold' and campaign_kind = 'campaign'
+    where kind = 'cold' and ok and campaign_kind = 'campaign'
 ),
 pit as (
     select c.*,
@@ -30,16 +30,12 @@ pit as (
     left join {{ ref('dim_runpod_endpoint') }} p
       on p.endpoint_id = c.endpoint_id
      and c.request_ts_utc >= p.valid_from_utc and c.request_ts_utc < coalesce(p.valid_to_utc, '9999-12-31'::timestamp_ntz)
-),
-pins as (
-    select design_gpu_model, mode(release_gpu_ids) as gpu_pin, count(distinct release_gpu_ids) as n_pins
-    from pit group by 1
 )
 select
     p.*,
-    k.gpu_pin, k.n_pins,
-    equal_null(p.release_gpu_ids, k.gpu_pin)                                       as release_gpu_agrees,
-    equal_null(p.poll_gpu_ids, k.gpu_pin)                                          as poll_gpu_agrees,
+    k.gpu_ids                                                                      as expected_gpu_ids,
+    equal_null(p.release_gpu_ids, k.gpu_ids)                                       as release_gpu_agrees,
+    equal_null(p.poll_gpu_ids, k.gpu_ids)                                          as poll_gpu_agrees,
     case lower(p.design_flashboot)
         when 'on'  then coalesce(p.poll_flashboot in ('FLASHBOOT', 'PRIORITY_FLASHBOOT'), false)
         when 'off' then coalesce(p.poll_flashboot = 'OFF', false)
@@ -47,4 +43,4 @@ select
     datediff('second', p.release_valid_from_utc, p.request_ts_utc)                 as s_since_release_version,
     sysdate()                                                                      as gold_built_at
 from pit p
-left join pins k on k.design_gpu_model = p.design_gpu_model
+left join {{ ref('campaign_gpu_pins') }} k on k.gpu_model = p.design_gpu_model

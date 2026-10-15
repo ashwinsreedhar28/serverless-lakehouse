@@ -3,7 +3,8 @@
     changed field. A release is written when a change needs a worker rollout (image, GPU selection, CUDA floor, data
     centers, disk, env); FlashBoot, workers and scaling changes do not write one. Releases are immutable, so every poll
     carries the same history and the latest copy of each version is kept. Values are kept only for the fields the
-    dimension tracks (`column_name` not null); env and registry-auth diffs keep their field name only. -#}
+    dimension tracks (`column_name` not null); env and registry-auth diffs keep their field name only. Unset values are
+    spelled as in silver_runpod_endpoint_config ('ALL' for CUDA floor / allowed CUDA / data centers, else null). -#}
 with raw as (
     select b.source_sha256 as poll_id, b.ingested_at, b.doc:polled_at::timestamp_tz as polled_at,
            e.key::string as endpoint_id, e.value:pagination:hasNextPage::boolean as has_next_page, r.value as rel
@@ -37,18 +38,14 @@ diffs as (
 )
 select
     endpoint_id, release_version, created_at_utc, release_source, field, column_name,
-    case column_name
-        when 'gpu_ids' then {{ gpu_ids_canonical('old_raw') }}
-        when 'allowed_cuda' then {{ csv_sorted('old_raw') }}
-        when 'locations' then {{ csv_sorted('old_raw') }}
-        else iff(column_name is null, null, old_raw)
-    end                                                     as old_value,
-    case column_name
-        when 'gpu_ids' then {{ gpu_ids_canonical('new_raw') }}
-        when 'allowed_cuda' then {{ csv_sorted('new_raw') }}
-        when 'locations' then {{ csv_sorted('new_raw') }}
-        else iff(column_name is null, null, new_raw)
-    end                                                     as new_value,
+    {%- for side in ['old', 'new'] %}
+    case
+        when column_name = 'gpu_ids'                      then nullif({{ gpu_ids_canonical(side ~ '_raw') }}, '')
+        when column_name in ('allowed_cuda', 'locations') then {{ csv_sorted("coalesce(nullif(" ~ side ~ "_raw, ''), 'ALL')") }}
+        when column_name = 'min_cuda'                     then coalesce(nullif({{ side }}_raw, ''), 'ALL')
+        when column_name is not null                      then nullif({{ side }}_raw, '')
+    end                                                     as {{ side }}_value,
+    {%- endfor %}
     has_next_page                                           as history_truncated,
     poll_id                                                 as seen_in_poll_id,
     sysdate()                                               as silver_built_at

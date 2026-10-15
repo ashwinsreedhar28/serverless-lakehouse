@@ -1,6 +1,8 @@
 {#- The SCD Type 2 window invariants, per key: windows are non-empty, at most one row is open (valid_to null), only the
     last row may be open, and each row ends exactly where the next begins (no gap, no overlap). Half-open windows
-    [valid_from, valid_to) then put every instant in at most one version. Returns one row per violation. -#}
+    [valid_from, valid_to) then put every instant in at most one version. It does not check that a key has an open row
+    or that every observation is covered; for a model that derives valid_to from the next row it can only catch ties.
+    Returns one row per violation. -#}
 {% test scd2_windows(model, key, valid_from='valid_from_utc', valid_to='valid_to_utc') %}
 with w as (
     select
