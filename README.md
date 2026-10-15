@@ -418,15 +418,15 @@ slowly changing dimension sit side by side in `snowflake/dbt/models/runpod/` and
   the history itself rather than something rebuilt from bronze, and it samples at dbt-run cadence.
 
 Checks: `scd2_windows` (one open row per endpoint, no gaps, no overlaps) on all three; `assert_release_dim_matches_every_poll`
-compares the release rebuild with what every poll saw (1,616 of 1,616 poll × endpoint observations agree on all six columns
-over the Mac's 154 polls, Oct 7–15).
+compares the release rebuild with what every poll in bronze saw, column for column (it passes; over the Mac's 154 polls,
+Oct 7–15, that is 1,616 of 1,616 poll × endpoint observations).
 
 What the campaign shows (`gold_campaign_config_asof`, `gold_scd2_asof_agreement`): joined point-in-time on endpoint and
-request time, the release history puts **257 of 257** campaign cold starts on their cell's GPU; the hourly poll history
-puts **65 of 257 (25.3 %)** there and gets FlashBoot right for **130 of 257 (50.6 %)** — chance level for four GPUs and an
+request time, the release history puts **267 of 267** campaign cold starts on their cell's GPU; the poll history puts
+**72 of 267 (27.0 %)** there and gets FlashBoot right for **132 of 267 (49.4 %)** — chance level for four GPUs and an
 on/off switch. A cell re-points its endpoint minutes before its cold start, so the first poll to see the new config comes
-*after* the cold start, which then joins to the previous cell's version. Over the same week the polls saw 57 changes to
-the release-tracked columns while the log holds 147 releases that changed them. For per-cell facts the cell's own recorded
+*after* the cold start, which then joins to the previous cell's version. Over the Mac's 154 polls the polls saw 57 changes
+to the release-tracked columns while the log holds 147 releases that changed them in the same window. For per-cell facts the cell's own recorded
 design (the seed row, written when the cell ran) is the source of truth; the poll history is good for endpoints that
 change on a timescale of hours or slower.
 
