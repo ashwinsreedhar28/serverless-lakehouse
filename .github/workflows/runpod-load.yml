@@ -9,6 +9,8 @@ on:
   schedule:
     - cron: "19 */3 * * *"
   workflow_dispatch:
+  push:
+    branches: [scd2]   # temporary: lets the scd2 branch run the full build before it merges
 concurrency: { group: loadgen, cancel-in-progress: false }
 jobs:
   load:
