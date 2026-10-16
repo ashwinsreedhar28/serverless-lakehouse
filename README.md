@@ -419,7 +419,7 @@ slowly changing dimension sit side by side in `snowflake/dbt/models/runpod/` and
   `valid_from_utc` is the release's `createdAt`, so a change between two polls still gets its own version and its real
   start time — for every release the poller has fetched. The poller reads the first page of `/releases` only
   (`assert_release_history_not_truncated` warns if a second page ever appears), and Runpod's list can skip a version
-  number (one endpoint's runs 1–3, 5–8). FlashBoot, workers and scaling write no release, so this history cannot hold them.
+  number (one endpoint's list holds versions 1–3 and 5–8). FlashBoot, workers and scaling write no release, so this history cannot hold them.
 - `snap_runpod_endpoint_config` — a dbt snapshot (check strategy, `updated_at` = poll time, `hard_deletes: invalidate`)
   of the latest complete poll. It is the history itself rather than something rebuilt from bronze, it samples at
   dbt-run cadence, and it closes a deleted endpoint at the snapshot's *run* time while it opens versions at *poll* time.
