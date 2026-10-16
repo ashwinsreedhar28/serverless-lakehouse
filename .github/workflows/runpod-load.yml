@@ -76,18 +76,27 @@ jobs:
         run: |
           python - <<'PY'
           from lakehouse.sf.client import connect
-          cur = connect("GOLD").cursor()
-          for table, sql in [
-              ("gold_scd2_history_summary", "select metric, value, detail from GOLD.gold_scd2_history_summary order by ord"),
-              ("gold_scd2_asof_agreement", "select history, attribute, n_cold_starts, n_agree, pct_agree from GOLD.gold_scd2_asof_agreement"),
-          ]:
+          # informational step: every failure, the connection included, is a warning and never fails the backstop
+          try:
+              conn = connect("GOLD")
+          except Exception as e:
+              print(f"::warning title=SCD2 figures::could not connect: {type(e).__name__}: {e}".replace("\n", " "))
+          else:
               try:
-                  rows = cur.execute(sql).fetchall()
-                  lines = [" | ".join("" if v is None else str(v) for v in r) for r in rows]
-                  print(table, *lines, sep="\n")
-                  print(f"::notice title={table}::" + "%0A".join(lines))
-              except Exception as e:   # informational step: report, do not fail the backstop
-                  print(f"::warning title={table}::{type(e).__name__}: {e}".replace("\n", " "))
+                  cur = conn.cursor()
+                  for table, sql in [
+                      ("gold_scd2_history_summary", "select metric, value, detail from GOLD.gold_scd2_history_summary order by ord"),
+                      ("gold_scd2_asof_agreement", "select history, attribute, n_cold_starts, n_agree, pct_agree from GOLD.gold_scd2_asof_agreement"),
+                  ]:
+                      try:
+                          rows = cur.execute(sql).fetchall()
+                          lines = [" | ".join("" if v is None else str(v) for v in r) for r in rows]
+                          print(table, *lines, sep="\n")
+                          print(f"::notice title={table}::" + "%0A".join(lines))
+                      except Exception as e:
+                          print(f"::warning title={table}::{type(e).__name__}: {e}".replace("\n", " "))
+              finally:
+                  conn.close()
           PY
       - name: spend log
         env:

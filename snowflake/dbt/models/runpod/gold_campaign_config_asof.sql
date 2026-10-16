@@ -1,9 +1,10 @@
 {{ config(schema='GOLD') }}
 {#- Every completed campaign cold start (kind = 'cold' and ok: the same set the campaign gold tables count), joined
     point-in-time (endpoint_id + request time inside [valid_from, valid_to)) to both config histories, and scored
-    against what the cell actually asked Runpod for:
-      - GPU: seeds/campaign_gpu_pins.csv, the selection tools/campaign.py PATCHes for each GPU model (pool minus the
-        pool's other types, per Runpod's published pool list) — independent of either history
+    against the campaign's design for the cell:
+      - GPU: seeds/campaign_gpu_pins.csv, the selection the campaign's design implies for each GPU model (its pool
+        minus the pool's other types, per Runpod's published pool list) — independent of either history. It is the
+        intended selection, not a recorded PATCH body and not the GPU a worker actually landed on.
       - FlashBoot: the cell's design (seed row). Only the poll history has FlashBoot: Runpod writes no release for it.
     The campaign re-points three endpoints every cell, minutes before each cold start, so this is the hard case for a
     sampled history. -#}
@@ -34,8 +35,9 @@ pit as (
 select
     p.*,
     k.gpu_ids                                                                      as expected_gpu_ids,
-    equal_null(p.release_gpu_ids, k.gpu_ids)                                       as release_gpu_agrees,
-    equal_null(p.poll_gpu_ids, k.gpu_ids)                                          as poll_gpu_agrees,
+    -- false, not null-equals-null, when the pin or the matching version is missing
+    coalesce(p.release_gpu_ids = k.gpu_ids, false)                                 as release_gpu_agrees,
+    coalesce(p.poll_gpu_ids = k.gpu_ids, false)                                    as poll_gpu_agrees,
     case lower(p.design_flashboot)
         when 'on'  then coalesce(p.poll_flashboot in ('FLASHBOOT', 'PRIORITY_FLASHBOOT'), false)
         when 'off' then coalesce(p.poll_flashboot = 'OFF', false)

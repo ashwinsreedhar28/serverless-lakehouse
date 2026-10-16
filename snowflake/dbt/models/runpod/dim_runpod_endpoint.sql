@@ -8,18 +8,16 @@
     gap between the last poll of the previous version and the first poll of this one, and anything changed and changed
     back inside that gap is invisible. For image / GPU / CUDA floor dim_runpod_endpoint_release has the exact times.
 
-    An endpoint missing from a poll after its last sighting was deleted: its last version closes at that poll and
-    is_deleted is set. Polls that listed no endpoints at all are not treated as evidence of anything. -#}
+    An endpoint missing from a *complete* listing after its last sighting was deleted: its last version closes at that
+    poll and is_deleted is set. A poll whose listing failed part-way (endpoints_complete false) still contributes the
+    configs it did see, but is never evidence of a deletion. -#}
 {%- set cols = endpoint_tracked_cols() %}
-with spine as (
-    select poll_id, polled_at_utc, row_number() over (order by polled_at_utc, poll_id) as seq
-    from {{ ref('silver_runpod_polls') }}
-    where n_endpoints > 0
+with complete_polls as (
+    select polled_at_utc from {{ ref('silver_runpod_polls') }} where endpoints_complete
 ),
 obs as (
-    select c.*, s.seq
+    select c.*, row_number() over (partition by c.endpoint_id order by c.polled_at_utc, c.poll_id) as seq
     from {{ ref('silver_runpod_endpoint_config') }} c
-    join spine s on s.poll_id = c.poll_id
 ),
 flagged as (
     select *, coalesce(config_hash <> lag(config_hash) over (partition by endpoint_id order by seq), true) as starts_version
@@ -39,9 +37,11 @@ versions as (
     group by 1, 2
 ),
 gone as (
-    select o.endpoint_id, s.polled_at_utc as deleted_at_utc
-    from (select endpoint_id, max(seq) as last_seq from obs group by 1) o
-    join spine s on s.seq = o.last_seq + 1
+    -- the first complete listing after the last sighting (it cannot contain the endpoint, or that would be the last sighting)
+    select l.endpoint_id, min(p.polled_at_utc) as deleted_at_utc
+    from (select endpoint_id, max(polled_at_utc) as last_seen_utc from obs group by 1) l
+    join complete_polls p on p.polled_at_utc > l.last_seen_utc
+    group by 1
 ),
 type1 as (
     -- current-value columns: the latest poll's, on every version row
