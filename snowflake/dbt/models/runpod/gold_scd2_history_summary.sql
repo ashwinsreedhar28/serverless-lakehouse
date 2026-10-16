@@ -4,7 +4,7 @@
 {%- set rcols = release_tracked_cols() %}
 with polls as (
     select min(polled_at_utc) as first_poll_utc, max(polled_at_utc) as last_poll_utc, count(*) as n_polls
-    from {{ ref('silver_runpod_polls') }} where n_endpoints > 0
+    from {{ ref('silver_runpod_polls') }} where endpoints_complete
 ),
 obs as (select * from {{ ref('silver_runpod_endpoint_config') }}),
 rebuild as (
@@ -31,6 +31,13 @@ log_release_changes as (
     from {{ ref('dim_runpod_endpoint_release') }} r, polls p
     where r.version_no > 1 and r.valid_from_utc > p.first_poll_utc and r.valid_from_utc <= p.last_poll_utc
 ),
+misses as (
+    -- poll-history GPU misses, and how many of them sit on a poll version that began before the cell's release version
+    -- (the poll had not yet seen the change): the polling-lag explanation, measured instead of asserted
+    select count_if(not poll_gpu_agrees) as n_miss,
+           count_if(not poll_gpu_agrees and poll_valid_from_utc < release_valid_from_utc) as n_miss_before_release
+    from {{ ref('gold_campaign_config_asof') }}
+),
 counts as (
     select 'polls' as history, count(*) as n_versions, count(distinct endpoint_id) as n_endpoints,
            count_if(is_current) as n_current, count_if(is_deleted) as n_deleted
@@ -51,6 +58,9 @@ from (
     union all select 3, 'observations the release rebuild matches on all six release columns', n_match, null from rebuild
     union all select 4, 'changes to release-tracked columns the polls saw', n, 'in the polled window' from poll_release_changes
     union all select 5, 'changes to release-tracked columns in the release log', n, 'same window' from log_release_changes
+    union all select 9, 'campaign cold starts the poll history puts on the wrong GPU', n_miss, null from misses
+    union all select 10, 'of those, on a poll version that began before the cell''s release version', n_miss_before_release,
+                     'the poll had not seen the change yet' from misses
     {%- for h, o in [('polls', 6), ('release log', 7), ('dbt snapshot', 8)] %}
     union all select {{ o }}, '{{ h }}: versions', n_versions,
                      n_endpoints || ' endpoints, ' || n_current || ' current' || coalesce(', ' || n_deleted || ' deleted', '')

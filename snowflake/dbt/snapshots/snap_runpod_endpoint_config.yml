@@ -6,9 +6,11 @@ snapshots:
   - name: snap_runpod_endpoint_config
     relation: ref('silver_runpod_endpoint_current')
     description: >
-      dbt snapshot (check strategy) of each endpoint's tracked config. dbt_valid_from is the poll time of the first
-      snapshot that saw a version (updated_at = polled_at_utc); a deleted endpoint's row is closed at the snapshot run
-      that no longer saw it.
+      dbt snapshot (check strategy) of each endpoint's tracked config, from the latest complete poll. dbt_valid_from is
+      the poll time of the first snapshot that saw a version (updated_at = polled_at_utc); a deleted endpoint's row is
+      closed at the *run* time of the snapshot that no longer saw it (dbt's hard_deletes uses snapshot_get_time), so
+      versions start on poll time but deletions end on run time. Written only by the GitHub runpod-load job (the Mac's
+      sf-runpod-load excludes it), so two writers never merge into it at once.
     config:
       schema: SILVER
       unique_key: endpoint_id
@@ -19,6 +21,6 @@ snapshots:
       hard_deletes: invalidate
       tags: [runpod]
     data_tests:
-      # warn, not error: an endpoint missing from one latest poll is invalidated and reopens with a gap, which is what
-      # the snapshot really saw; it should not fail the scheduled build
-      - scd2_windows: {arguments: {key: endpoint_id, valid_from: dbt_valid_from, valid_to: dbt_valid_to}, config: {severity: warn}}
+      # a hard-deleted endpoint that comes back reopens after a gap, which is what the snapshot saw; overlaps, ties and
+      # two open rows are still errors
+      - scd2_windows: {arguments: {key: endpoint_id, valid_from: dbt_valid_from, valid_to: dbt_valid_to, allow_gaps: true}}

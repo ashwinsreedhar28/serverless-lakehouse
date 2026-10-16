@@ -66,19 +66,21 @@ def get(url: str, key: str, timeout: int = 30) -> dict | list | None:
     return None
 
 
-def list_endpoints(key: str) -> list[dict]:
+def list_endpoints(key: str) -> tuple[list[dict], bool]:
+    """Every endpoint, and whether the listing completed. A page that fails mid-listing leaves a partial list, which
+    downstream must not read as "the missing endpoints were deleted" (dim_runpod_endpoint uses complete polls only)."""
     out, cursor = [], None
     while True:
         url = f"{REST}/v2/serverless?limit=1000" + (f"&cursor={cursor}" if cursor else "")
         page = get(url, key)
         if not isinstance(page, dict) or "endpoints" not in page:
             print(f"  endpoints: unexpected response {str(page)[:200]}", file=sys.stderr)
-            return out
+            return out, False
         out += page["endpoints"]
         pg = page.get("pagination") or {}
         cursor = pg.get("nextCursor")
         if not pg.get("hasNextPage") or not cursor:
-            return out
+            return out, True
 
 
 def read_jobs_file(path: Path, polled_at: datetime) -> list[dict]:
@@ -104,8 +106,9 @@ def poll(key: str, jobs: list[dict]) -> dict:
     polled_at = datetime.now(timezone.utc)
     doc: dict = {"polled_at": polled_at.isoformat(timespec="seconds"), "tool": "runpod_poll 0.1", "endpoints": [],
                  "workers": {}, "health": {}, "releases": {}, "billing": None, "jobs": []}
-    endpoints = list_endpoints(key)
+    endpoints, complete = list_endpoints(key)
     doc["endpoints"] = endpoints
+    doc["endpoints_complete"] = complete
     for ep in endpoints:
         eid = ep.get("id")
         if not eid:

@@ -1,11 +1,14 @@
 {{ config(schema='SILVER') }}
-{#- One row per API snapshot: when it was taken and what it saw. The sequence number orders polls for the worker diff. -#}
+{#- One row per API snapshot: when it was taken and what it saw. The sequence number orders polls for the worker diff.
+    endpoints_complete says the endpoint listing finished, so an endpoint absent from it is gone (not a failed page). -#}
 select
     source_sha256                                                   as poll_id,
     doc:polled_at::timestamp_tz                                     as polled_at_tz,
     convert_timezone('UTC', doc:polled_at::timestamp_tz)::timestamp_ntz   as polled_at_utc,
     row_number() over (order by doc:polled_at::timestamp_tz, source_sha256)  as poll_seq,
     array_size(doc:endpoints)                                       as n_endpoints,
+    -- polls written before the poller recorded this were one page (limit=1000): complete whenever they listed anything
+    coalesce(doc:endpoints_complete::boolean, array_size(doc:endpoints) > 0)   as endpoints_complete,
     doc:billing:metadata:recordCount::number                        as n_billing_records,
     array_size(doc:jobs)                                            as n_job_lookups,
     source_file, ingested_at, run_label                             as bronze_run_label,

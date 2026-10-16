@@ -1,9 +1,10 @@
 {#- The SCD Type 2 window invariants, per key: windows are non-empty, at most one row is open (valid_to null), only the
-    last row may be open, and each row ends exactly where the next begins (no gap, no overlap). Half-open windows
-    [valid_from, valid_to) then put every instant in at most one version. It does not check that a key has an open row
-    or that every observation is covered; for a model that derives valid_to from the next row it can only catch ties.
-    Returns one row per violation. -#}
-{% test scd2_windows(model, key, valid_from='valid_from_utc', valid_to='valid_to_utc') %}
+    last row may be open, no window overlaps the next, and (unless allow_gaps) each row ends exactly where the next
+    begins. Half-open windows [valid_from, valid_to) then put every instant in at most one version. allow_gaps is for a
+    history where "not present" is real (a snapshot's hard-deleted key that comes back); overlaps are never allowed.
+    It does not check that a key has an open row or that every observation is covered; for a model that derives
+    valid_to from the next row it can only catch ties. Returns one row per violation. -#}
+{% test scd2_windows(model, key, valid_from='valid_from_utc', valid_to='valid_to_utc', allow_gaps=false) %}
 with w as (
     select
         {{ key }} as k, {{ valid_from }} as vf, {{ valid_to }} as vt,
@@ -18,7 +19,9 @@ checked as (
             when n_open > 1                                 then 'more than one open row'
             when next_vf is not null and vt is null         then 'open row is not the last'
             when next_vf is not null and vt > next_vf       then 'overlaps the next version'
+            {%- if not allow_gaps %}
             when next_vf is not null and vt < next_vf       then 'gap before the next version'
+            {%- endif %}
         end as violation
     from w
 )

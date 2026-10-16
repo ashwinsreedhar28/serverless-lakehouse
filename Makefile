@@ -261,9 +261,11 @@ sf-show: $(SF_VENV)/.installed $(SF_LOGS)
 sf-runpod-poll: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) tools/runpod_poll.py $(RUNPOD_POLL_FLAGS) 2>&1 | tee $(SF_LOGS)/sf-runpod-poll.log; exit $${PIPESTATUS[0]}
 
+# The dbt snapshot (snap_runpod_endpoint_config) is left to the GitHub runpod-load job, its only writer: a snapshot is a
+# MERGE into its own history, and two builds merging at once could both open a row.
 sf-runpod-load: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.runpod load 2>&1 | tee $(SF_LOGS)/sf-runpod-load.log; exit $${PIPESTATUS[0]}
-	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors --select tag:runpod 2>&1 | tee ../../$(SF_LOGS)/dbt-runpod.log; exit $${PIPESTATUS[0]}
+	cd snowflake/dbt && ../../$(SF_DBT) build --no-use-colors --select tag:runpod --exclude resource_type:snapshot 2>&1 | tee ../../$(SF_LOGS)/dbt-runpod.log; exit $${PIPESTATUS[0]}
 
 sf-spend: $(SF_VENV)/.installed $(SF_LOGS)
 	$(SF_PYTHON) -m lakehouse.sf.spend 2>&1 | tee $(SF_LOGS)/sf-spend.log; exit $${PIPESTATUS[0]}
