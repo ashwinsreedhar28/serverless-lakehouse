@@ -405,39 +405,54 @@ slowly changing dimension sit side by side in `snowflake/dbt/models/runpod/` and
 
 - `dim_runpod_endpoint` — check strategy, rebuilt from the *whole* poll history on every run: a version starts at the
   first poll whose tracked config (`endpoint_tracked_cols()`: GPU selection, CUDA floor, image, data centers, disk,
-  FlashBoot, idle timeout, scaling, request timeout, volumes) differs from the poll before; half-open windows
-  `[valid_from_utc, valid_to_utc)`; an endpoint missing from a later poll closes as `is_deleted`. `changed_after_utc` says
-  how late `valid_from_utc` can be — the change happened somewhere in that gap. `workers.min/max` are current-value
-  (Type 1) columns: the campaign flips them inside one cell, faster than any poll.
+  FlashBoot, idle timeout, scaling, request timeout, volumes) differs from the poll before, so A→B→A is three versions;
+  half-open windows `[valid_from_utc, valid_to_utc)`. An endpoint missing from a *complete* listing after its last
+  sighting closes as `is_deleted` (the poller records `endpoints_complete`; a listing that failed part-way is never read
+  as a deletion). `changed_after_utc` says how late `valid_from_utc` can be — the change happened somewhere in that gap,
+  and a change made and reverted inside it is invisible. `workers.min/max` are current-value (Type 1) columns: the
+  campaign flips them inside one cell, faster than any poll. Because it is rebuilt, a poll that arrives late can move a
+  boundary, and the surrogate key (endpoint + `valid_from_utc`) with it — join facts to it on endpoint and time, not on
+  a stored key.
 - `dim_runpod_endpoint_release` — timestamp strategy from Runpod's own change log (`/releases`, one release per change
   that needs a worker rollout: image, GPU selection, CUDA floor, data centers, disk). Releases are diffs, so each column
-  is rebuilt per release from the nearest diff before it (`new`) or after it (`old`). `valid_from_utc` is the release's
-  `createdAt`, and no version is lost between polls. FlashBoot, workers and scaling write no release, so this history
-  cannot hold them.
-- `snap_runpod_endpoint_config` — a dbt snapshot (check strategy, `hard_deletes: invalidate`) of the latest poll. It is
-  the history itself rather than something rebuilt from bronze, and it samples at dbt-run cadence.
+  is rebuilt per release from the nearest diff before it (`new`) or after it (`old`), else the value the polls see.
+  `valid_from_utc` is the release's `createdAt`, so a change between two polls still gets its own version and its real
+  start time — for every release the poller has fetched. The poller reads the first page of `/releases` only
+  (`assert_release_history_not_truncated` warns if a second page ever appears), and Runpod's list can skip a version
+  number (one endpoint's runs 1–3, 5–8). FlashBoot, workers and scaling write no release, so this history cannot hold them.
+- `snap_runpod_endpoint_config` — a dbt snapshot (check strategy, `updated_at` = poll time, `hard_deletes: invalidate`)
+  of the latest complete poll. It is the history itself rather than something rebuilt from bronze, it samples at
+  dbt-run cadence, and it closes a deleted endpoint at the snapshot's *run* time while it opens versions at *poll* time.
+  Only the GitHub `runpod-load` job writes it (the Mac's `sf-runpod-load` excludes it): a snapshot is a merge into its
+  own history, and two writers at once could both open a row.
 
-Checks: `scd2_windows` (non-empty windows, at most one open row per endpoint, no gap or overlap between consecutive
-rows) on all three, an error on the two dimensions and a warning on the snapshot, where a missed poll legitimately leaves
-a gap; `assert_scd2_dims_cover_every_poll` (every poll × endpoint observation falls in exactly one version of each
-dimension, the poll-built version holds exactly the config that poll saw, and every endpoint that was not deleted has
-exactly one current row); `assert_release_dim_matches_every_poll` (the release rebuild against what every poll saw).
+Checks: `scd2_windows` on all three (non-empty windows, at most one open row, no overlap with the next row, and no gap —
+except on the snapshot, where a deleted endpoint that comes back legitimately reopens after one); since the two
+dimensions take `valid_to` from the next row, there it can only catch ties. `assert_scd2_dims_cover_every_poll` is the
+real coverage check: every poll × endpoint observation falls in exactly one version of each dimension, the poll-built
+version holds exactly the config that poll saw, and current rows agree with the polls (listed in the latest complete
+poll or seen after it), not with the dimension's own `is_deleted`. `assert_release_dim_matches_every_poll` compares the
+release rebuild with what every poll saw; for a column that never changed the rebuild falls back to the poll value, so
+it is only informative for columns that did change.
 
-`gold_scd2_history_summary` holds every figure below, computed from all 190 polls in bronze (Mac and GitHub poller,
-Oct 7 22:28 – Oct 15 23:27 UTC): the release rebuild matches **1,997 of 1,997** poll × endpoint observations on all six
+`gold_scd2_history_summary` holds every figure below, computed from all 193 polls in bronze (Mac and GitHub poller,
+Oct 7 22:28 – Oct 16 01:26 UTC): the release rebuild matches **2,036 of 2,036** poll × endpoint observations on all six
 release columns; the polls saw **68** changes to those columns while the release log holds **147** in the same window;
 the poll history has 89 versions, the release history 265 (it reaches back to Sep 23, before the poller existed), the
 snapshot 13 (it knows nothing before its first run).
 
 What the campaign shows (`gold_campaign_config_asof`, `gold_scd2_asof_agreement`): each of the **252** completed campaign
-cold starts is joined point-in-time on endpoint and request time and scored against the GPU selection its cell PATCHed
-(`seeds/campaign_gpu_pins.csv`: Runpod's published pool for the GPU minus the pool's other types — independent of
-either history) and the cell's FlashBoot design. The release history puts **252 of 252** on the right GPU; the poll
-history **62 of 252 (24.6 %)**, and FlashBoot right for **126 of 252 (50.0 %)** — chance level for four GPUs and an
-on/off switch. A cell re-points its endpoint minutes before its cold start, so the first poll to see the new config
-comes *after* the cold start, which then joins to the previous cell's version. For per-cell facts the cell's own recorded
-design (the seed row, written when the cell ran) is the source of truth; the poll history is good for endpoints that
-change on a timescale of hours or slower.
+cold starts is joined point-in-time on endpoint and request time and scored against the campaign's design for its cell —
+the GPU selection that design implies (`seeds/campaign_gpu_pins.csv`: Runpod's published pool for the GPU minus the
+pool's other types, independent of either history) and the cell's FlashBoot setting. This is agreement with the
+*intended* selection, not with a recorded PATCH body or with the GPU a worker landed on. The release history puts
+**252 of 252** on the design's GPU; the poll history **62 of 252 (24.6 %)**, and FlashBoot right for **126 of 252
+(50.0 %)** — close to what uniform guessing would score for four GPUs and an on/off switch (25 % and 50 %), though the
+code tests no statistical baseline. All **190** poll-history GPU misses sit on a poll version that began before the
+cell's release version: the poll had not yet seen the change, which is what polling lag predicts (each cell re-points its
+endpoint minutes before its cold start). For per-cell facts the campaign's design, as `campaign prepare` wrote it into
+the seed rows before the cells ran, is the better source; the poll history is good for endpoints that change on a
+timescale of hours or slower.
 
 ## Audit
 

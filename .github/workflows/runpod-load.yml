@@ -9,8 +9,6 @@ on:
   schedule:
     - cron: "19 */3 * * *"
   workflow_dispatch:
-  push:
-    branches: [scd2-audit2]   # temporary: run the full build on the audit-fix branch before it merges
 concurrency: { group: loadgen, cancel-in-progress: false }
 jobs:
   load:
